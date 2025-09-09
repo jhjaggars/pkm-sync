@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"pkm-sync/pkg/models"
@@ -52,10 +50,10 @@ func (s *Service) GetMessages(since time.Time, limit int) ([]*gmail.Message, err
 	}
 
 	// Build the query based on configuration.
-	query := s.buildQuery(since)
+	query := s.BuildQuery(since)
 
 	// Debug logging.
-	slog.Info("Gmail query built",
+	slog.Info("Gmail query built (using Threads API)",
 		"source_id", s.sourceID,
 		"query", query,
 		"since", since.Format("2006-01-02"),
@@ -71,31 +69,142 @@ func (s *Service) GetMessages(since time.Time, limit int) ([]*gmail.Message, err
 		limit = s.config.MaxRequests
 	}
 
-	// List messages using the Gmail API with retry logic.
-	req := s.service.Users.Messages.List("me").Q(query).MaxResults(int64(limit))
+	// Get threads using the Threads API instead of Messages API
+	threads, err := s.GetThreads(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get threads: %w", err)
+	}
+
+	// Extract messages from threads while preserving interface compatibility
+	var messages []*gmail.Message
+
+	for _, thread := range threads {
+		if thread.Messages != nil {
+			messages = append(messages, thread.Messages...)
+		}
+	}
+
+	slog.Info("Gmail API response (from threads)",
+		"source_id", s.sourceID,
+		"threads_found", len(threads),
+		"messages_extracted", len(messages),
+		"query", query)
+
+	return messages, nil
+}
+
+// GetThreads fetches Gmail threads using the Threads API.
+func (s *Service) GetThreads(query string, limit int) ([]*gmail.Thread, error) {
+	// List threads using the Gmail Threads API with retry logic.
+	req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(limit))
 
 	resp, err := s.executeWithRetry(func() (interface{}, error) {
 		return req.Do()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to list messages: %w", err)
+		return nil, fmt.Errorf("unable to list threads: %w", err)
 	}
 
-	listResp := resp.(*gmail.ListMessagesResponse)
-	slog.Info("Gmail API response", "source_id", s.sourceID, "messages_found", len(listResp.Messages), "query", query)
+	listResp := resp.(*gmail.ListThreadsResponse)
+	slog.Info("Gmail Threads API response",
+		"source_id", s.sourceID,
+		"threads_found", len(listResp.Threads),
+		"query", query)
 
-	if len(listResp.Messages) == 0 {
-		return []*gmail.Message{}, nil
+	if len(listResp.Threads) == 0 {
+		return []*gmail.Thread{}, nil
 	}
 
-	// Fetch full message details for each message with controlled concurrency.
-	messages, skippedCount := s.fetchMessagesConcurrently(listResp.Messages)
+	// Fetch full thread details for each thread with controlled concurrency.
+	threads, skippedCount := s.fetchThreadsConcurrently(listResp.Threads)
 
 	if skippedCount > 0 {
-		slog.Info("Message retrieval completed", "retrieved", len(messages), "skipped", skippedCount)
+		slog.Info("Thread retrieval completed", "retrieved", len(threads), "skipped", skippedCount)
 	}
 
-	return messages, nil
+	return threads, nil
+}
+
+// GetThread fetches a single Gmail thread with full message content.
+func (s *Service) GetThread(threadID string) (*gmail.Thread, error) {
+	req := s.service.Users.Threads.Get("me", threadID).Format("full")
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, s.handleThreadError(err, threadID, "get_thread")
+	}
+
+	thread := resp.(*gmail.Thread)
+	slog.Debug("Retrieved thread", "thread_id", threadID, "message_count", len(thread.Messages))
+
+	return thread, nil
+}
+
+// fetchThreadsConcurrently fetches multiple threads concurrently with rate limiting.
+func (s *Service) fetchThreadsConcurrently(threadList []*gmail.Thread) ([]*gmail.Thread, int) {
+	const maxWorkers = 10
+
+	workers := maxWorkers
+	if len(threadList) < workers {
+		workers = len(threadList)
+	}
+
+	threadCh := make(chan *gmail.Thread, len(threadList))
+	resultCh := make(chan *gmail.Thread, len(threadList))
+	errorCh := make(chan error, len(threadList))
+
+	// Send thread IDs to worker channel
+	for _, thread := range threadList {
+		threadCh <- thread
+	}
+
+	close(threadCh)
+
+	// Start workers
+	for i := 0; i < workers; i++ {
+		go func() {
+			for thread := range threadCh {
+				// Apply request delay if configured
+				if s.config.RequestDelay > 0 {
+					time.Sleep(s.config.RequestDelay)
+				}
+
+				fullThread, err := s.GetThread(thread.Id)
+				if err != nil {
+					slog.Warn("Failed to get thread", "thread_id", thread.Id, "error", err)
+
+					errorCh <- err
+
+					continue
+				}
+
+				resultCh <- fullThread
+			}
+		}()
+	}
+
+	// Collect results
+	var threads []*gmail.Thread
+
+	var errors []error
+
+	for i := 0; i < len(threadList); i++ {
+		select {
+		case thread := <-resultCh:
+			threads = append(threads, thread)
+		case err := <-errorCh:
+			errors = append(errors, err)
+		}
+	}
+
+	skippedCount := len(errors)
+	if skippedCount > 0 {
+		slog.Warn("Some threads could not be retrieved", "errors", skippedCount)
+	}
+
+	return threads, skippedCount
 }
 
 // GetMessage retrieves a single message with full details.
@@ -142,45 +251,8 @@ func (s *Service) GetMessageWithRetry(messageID string) (*gmail.Message, error) 
 	return resp.(*gmail.Message), nil
 }
 
-// GetMessagesInRange retrieves messages within a specific time range.
-func (s *Service) GetMessagesInRange(start, end time.Time, limit int) ([]*gmail.Message, error) {
-	if end.Before(start) {
-		return nil, fmt.Errorf("end time must be after start time")
-	}
-
-	// Build query with both start and end time filters.
-	query := s.buildQueryWithRange(start, end)
-
-	if limit <= 0 {
-		limit = 100
-	}
-
-	req := s.service.Users.Messages.List("me").Q(query).MaxResults(int64(limit))
-
-	resp, err := s.executeWithRetry(func() (interface{}, error) {
-		return req.Do()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to list messages in range: %w", err)
-	}
-
-	listResp := resp.(*gmail.ListMessagesResponse)
-	if len(listResp.Messages) == 0 {
-		return []*gmail.Message{}, nil
-	}
-
-	// Fetch full message details with concurrent processing.
-	messages, skippedCount := s.fetchMessagesConcurrently(listResp.Messages)
-
-	if skippedCount > 0 {
-		slog.Info("Message range retrieval completed", "retrieved", len(messages), "skipped", skippedCount)
-	}
-
-	return messages, nil
-}
-
-// buildQuery constructs a Gmail search query based on configuration and since time.
-func (s *Service) buildQuery(since time.Time) string {
+// BuildQuery constructs a Gmail search query based on configuration and since time.
+func (s *Service) BuildQuery(since time.Time) string {
 	return buildQuery(s.config, since)
 }
 
@@ -338,6 +410,63 @@ func isTemporaryError(err error) bool {
 	return false
 }
 
+// isThreadError checks if an error is thread-specific and provides helpful context.
+func isThreadError(err error) (bool, string) {
+	if err == nil {
+		return false, ""
+	}
+
+	errStr := strings.ToLower(err.Error())
+
+	// Thread-specific error patterns
+	threadErrors := map[string]string{
+		"thread not found":     "Thread may have been deleted or moved",
+		"invalid thread id":    "Thread ID format is incorrect",
+		"thread access denied": "Insufficient permissions to access thread",
+		"thread too large":     "Thread contains too many messages for processing",
+		"quota exceeded":       "API quota exceeded - implement rate limiting",
+	}
+
+	for pattern, context := range threadErrors {
+		if strings.Contains(errStr, pattern) {
+			return true, context
+		}
+	}
+
+	return false, ""
+}
+
+// handleThreadError provides enhanced error handling for thread operations.
+func (s *Service) handleThreadError(err error, threadID string, operation string) error {
+	if err == nil {
+		return nil
+	}
+
+	isThread, context := isThreadError(err)
+	if isThread {
+		return fmt.Errorf("thread %s operation '%s' failed: %w (context: %s)",
+			threadID, operation, err, context)
+	}
+
+	// Check for rate limiting specifically in thread context
+	if googleErr, ok := err.(*googleapi.Error); ok {
+		switch googleErr.Code {
+		case 403:
+			return fmt.Errorf("thread %s operation '%s' rate limited: %w (suggestion: increase RequestDelay)",
+				threadID, operation, err)
+		case 429:
+			return fmt.Errorf("thread %s operation '%s' too many requests: %w (suggestion: reduce batch size)",
+				threadID, operation, err)
+		case 404:
+			return fmt.Errorf("thread %s not found during '%s': %w (thread may have been deleted)",
+				threadID, operation, err)
+		}
+	}
+
+	// Generic thread operation error
+	return fmt.Errorf("thread %s operation '%s' failed: %w", threadID, operation, err)
+}
+
 // getMessagesWithBatchProcessing handles large mailbox scenarios with optimized batch processing.
 func (s *Service) getMessagesWithBatchProcessing(since time.Time, limit int) ([]*gmail.Message, error) {
 	// Configure batch size based on configuration or use defaults.
@@ -352,7 +481,7 @@ func (s *Service) getMessagesWithBatchProcessing(since time.Time, limit int) ([]
 		requestDelay = 50 * time.Millisecond // Default delay for large batches.
 	}
 
-	slog.Info("Processing large mailbox", "batch_size", batchSize, "request_delay", requestDelay)
+	slog.Info("Processing large mailbox with threads", "batch_size", batchSize, "request_delay", requestDelay)
 
 	var (
 		allMessages  []*gmail.Message
@@ -369,25 +498,35 @@ func (s *Service) getMessagesWithBatchProcessing(since time.Time, limit int) ([]
 			currentBatch = remaining
 		}
 
-		messages, nextPageToken, skipped, err := s.getMessageBatch(since, currentBatch, pageToken, requestDelay)
+		threads, nextPageToken, skipped, err := s.getThreadBatch(since, currentBatch, pageToken, requestDelay)
 		if err != nil {
-			return allMessages, fmt.Errorf("batch processing failed: %w", err)
+			return allMessages, fmt.Errorf("thread batch processing failed: %w", err)
 		}
 
-		allMessages = append(allMessages, messages...)
+		// Extract messages from threads
+		var batchMessages []*gmail.Message
+
+		for _, thread := range threads {
+			if thread.Messages != nil {
+				batchMessages = append(batchMessages, thread.Messages...)
+			}
+		}
+
+		allMessages = append(allMessages, batchMessages...)
 		totalSkipped += skipped
-		remaining -= len(messages)
+		remaining -= len(threads) // Count threads, not messages for batch limiting
 
 		// Progress reporting for large batches.
 		if len(allMessages)%500 == 0 || remaining == 0 {
-			slog.Info("Batch processing progress",
-				"processed", len(allMessages),
+			slog.Info("Thread batch processing progress",
+				"threads_processed", len(allMessages)/5, // Rough estimate
+				"messages_extracted", len(allMessages),
 				"remaining", remaining,
 				"skipped", totalSkipped)
 		}
 
 		// Check if there are more pages.
-		if nextPageToken == "" || len(messages) == 0 {
+		if nextPageToken == "" || len(threads) == 0 {
 			break
 		}
 
@@ -395,23 +534,23 @@ func (s *Service) getMessagesWithBatchProcessing(since time.Time, limit int) ([]
 	}
 
 	if totalSkipped > 0 {
-		slog.Info("Batch processing completed", "retrieved", len(allMessages), "skipped", totalSkipped)
+		slog.Info("Thread batch processing completed", "messages_retrieved", len(allMessages), "skipped", totalSkipped)
 	}
 
 	return allMessages, nil
 }
 
-// getMessageBatch retrieves a single batch of messages with optimizations.
-func (s *Service) getMessageBatch(
+// getThreadBatch retrieves a single batch of threads with optimizations.
+func (s *Service) getThreadBatch(
 	since time.Time,
 	batchSize int,
 	pageToken string,
 	_ time.Duration,
-) ([]*gmail.Message, string, int, error) {
-	query := s.buildQuery(since)
+) ([]*gmail.Thread, string, int, error) {
+	query := s.BuildQuery(since)
 
-	// List messages for this batch.
-	req := s.service.Users.Messages.List("me").Q(query).MaxResults(int64(batchSize))
+	// List threads for this batch.
+	req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(batchSize))
 	if pageToken != "" {
 		req = req.PageToken(pageToken)
 	}
@@ -420,18 +559,18 @@ func (s *Service) getMessageBatch(
 		return req.Do()
 	})
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("unable to list message batch: %w", err)
+		return nil, "", 0, fmt.Errorf("unable to list thread batch: %w", err)
 	}
 
-	listResp := resp.(*gmail.ListMessagesResponse)
-	if len(listResp.Messages) == 0 {
-		return []*gmail.Message{}, "", 0, nil
+	listResp := resp.(*gmail.ListThreadsResponse)
+	if len(listResp.Threads) == 0 {
+		return []*gmail.Thread{}, "", 0, nil
 	}
 
-	// Fetch full message details with concurrent processing.
-	messages, skippedCount := s.fetchMessagesConcurrently(listResp.Messages)
+	// Fetch full thread details with concurrent processing.
+	threads, skippedCount := s.fetchThreadsConcurrently(listResp.Threads)
 
-	return messages, listResp.NextPageToken, skippedCount, nil
+	return threads, listResp.NextPageToken, skippedCount, nil
 }
 
 // GetAttachment retrieves attachment data for a specific message and attachment ID.
@@ -454,141 +593,4 @@ func (s *Service) GetAttachment(messageID, attachmentID string) (*gmail.MessageP
 	}
 
 	return resp.(*gmail.MessagePartBody), nil
-}
-
-// GetMessagesStream provides a streaming interface for very large mailboxes.
-func (s *Service) GetMessagesStream(since time.Time, batchSize int, callback func([]*gmail.Message) error) error {
-	if batchSize <= 0 {
-		batchSize = 50 // Smaller default for streaming.
-	}
-
-	pageToken := ""
-	totalProcessed := 0
-
-	for {
-		messages, nextPageToken, skipped, err := s.getMessageBatch(since, batchSize, pageToken, s.config.RequestDelay)
-		if err != nil {
-			return fmt.Errorf("streaming batch failed: %w", err)
-		}
-
-		if len(messages) == 0 {
-			break
-		}
-
-		// Call the callback with this batch.
-		if err := callback(messages); err != nil {
-			return fmt.Errorf("callback failed: %w", err)
-		}
-
-		totalProcessed += len(messages)
-
-		if skipped > 0 {
-			slog.Info("Streamed batch processed", "processed", len(messages), "skipped", skipped)
-		}
-
-		// Check if there are more pages.
-		if nextPageToken == "" {
-			break
-		}
-
-		pageToken = nextPageToken
-
-		// Optional: implement max processing limit.
-		if s.config.MaxRequests > 0 && totalProcessed >= s.config.MaxRequests {
-			slog.Info("Reached maximum request limit", "limit", s.config.MaxRequests)
-
-			break
-		}
-	}
-
-	slog.Info("Streaming completed", "total_processed", totalProcessed)
-
-	return nil
-}
-
-// fetchMessagesConcurrently fetches messages concurrently with rate limiting.
-func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
-	// Configure concurrency based on configuration and rate limiting needs.
-	maxWorkers := 5 // Conservative default to respect Gmail API limits.
-	if s.config.RequestDelay > 100*time.Millisecond {
-		// If delay is high, reduce concurrency.
-		maxWorkers = 2
-	}
-
-	// Create channels for work distribution.
-	messageChan := make(chan *gmail.Message, len(messageList))
-	resultChan := make(chan *gmail.Message, len(messageList))
-	errorChan := make(chan error, len(messageList))
-
-	// Use atomic counter to avoid data race.
-	var skippedCount int32
-
-	// Start workers.
-	var wg sync.WaitGroup
-	for i := 0; i < maxWorkers; i++ {
-		wg.Add(1)
-
-		go func(workerID int) {
-			defer wg.Done()
-
-			for msg := range messageChan {
-				// Apply rate limiting per worker.
-				if s.config.RequestDelay > 0 {
-					time.Sleep(s.config.RequestDelay)
-				}
-
-				fullMessage, err := s.GetMessageWithRetry(msg.Id)
-				if err != nil {
-					slog.Warn("Worker failed to get message", "worker_id", workerID, "message_id", msg.Id, "error", err)
-					atomic.AddInt32(&skippedCount, 1)
-
-					errorChan <- err
-				} else {
-					resultChan <- fullMessage
-				}
-			}
-		}(i)
-	}
-
-	// Send work to workers.
-	go func() {
-		for _, msg := range messageList {
-			messageChan <- msg
-		}
-
-		close(messageChan)
-	}()
-
-	// Wait for workers to complete.
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		close(errorChan)
-	}()
-
-	// Collect results.
-	var messages []*gmail.Message
-
-	// Collect all results.
-	for {
-		select {
-		case msg, ok := <-resultChan:
-			if !ok {
-				resultChan = nil
-			} else {
-				messages = append(messages, msg)
-			}
-		case _, ok := <-errorChan:
-			if !ok {
-				errorChan = nil
-			}
-		}
-
-		// Break when both channels are closed.
-		if resultChan == nil && errorChan == nil {
-			break
-		}
-	}
-
-	return messages, int(atomic.LoadInt32(&skippedCount))
 }

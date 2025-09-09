@@ -2,6 +2,7 @@ package google
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -148,49 +149,71 @@ func (g *GoogleSource) Fetch(since time.Time, limit int) ([]models.ItemInterface
 
 func (g *GoogleSource) fetchGmail(since time.Time, limit int) ([]models.ItemInterface, error) {
 	if g.gmailService == nil {
+		slog.Error("Gmail service not initialized", "source_id", g.sourceID)
+
 		return nil, fmt.Errorf("gmail service not initialized")
 	}
 
-	messages, err := g.gmailService.GetMessages(since, limit)
+	// Get threads using the new Threads API
+	query := g.gmailService.BuildQuery(since)
+	slog.Info("Fetching Gmail threads",
+		"source_id", g.sourceID,
+		"query", query,
+		"since", since.Format("2006-01-02"),
+		"limit", limit)
+
+	threads, err := g.gmailService.GetThreads(query, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch Gmail messages: %w", err)
+		slog.Error("Failed to fetch Gmail threads",
+			"source_id", g.sourceID,
+			"query", query,
+			"error", err)
+
+		return nil, fmt.Errorf("failed to fetch Gmail threads: %w", err)
 	}
 
-	items := make([]models.ItemInterface, 0, len(messages))
+	slog.Info("Gmail threads retrieved successfully",
+		"source_id", g.sourceID,
+		"threads_count", len(threads))
 
-	for _, message := range messages {
-		legacyItem, err := gmail.FromGmailMessageWithService(message, g.config.Gmail, g.gmailService)
+	items := make([]models.ItemInterface, 0, len(threads))
+
+	var conversionErrors []error
+
+	for i, thread := range threads {
+		// Convert thread directly to Item using new converter
+		threadItem, err := gmail.FromGmailThread(thread, g.config.Gmail, g.gmailService)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert Gmail message to item: %w", err)
+			slog.Warn("Failed to convert Gmail thread to item",
+				"source_id", g.sourceID,
+				"thread_id", thread.Id,
+				"thread_index", i,
+				"error", err)
+			conversionErrors = append(conversionErrors, err)
+
+			continue // Skip this thread but continue with others
 		}
 
-		// Convert legacy item to ItemInterface
-		item := models.AsItemInterface(legacyItem)
+		// Convert to ItemInterface
+		item := models.AsItemInterface(threadItem)
 		items = append(items, item)
 	}
 
-	if g.config.Gmail.IncludeThreads {
-		threadProcessor := gmail.NewThreadProcessor(g.config.Gmail)
+	if len(conversionErrors) > 0 {
+		slog.Warn("Some Gmail threads could not be converted",
+			"source_id", g.sourceID,
+			"total_threads", len(threads),
+			"successful_conversions", len(items),
+			"failed_conversions", len(conversionErrors))
 
-		// The thread processor still works with []*models.Item, so we need to convert
-		legacyItems := make([]*models.Item, len(items))
-		for i, item := range items {
-			legacyItems[i] = models.AsItemStruct(item)
-		}
-
-		processedLegacyItems, err := threadProcessor.ProcessThreads(legacyItems)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process threads: %w", err)
-		}
-
-		// Convert back to ItemInterface
-		processedItems := make([]models.ItemInterface, len(processedLegacyItems))
-		for i, legacyItem := range processedLegacyItems {
-			processedItems[i] = models.AsItemInterface(legacyItem)
-		}
-
-		return processedItems, nil
+		// Continue with successful conversions rather than failing completely
+		// This provides better resilience in production
 	}
+
+	slog.Info("Gmail thread processing completed",
+		"source_id", g.sourceID,
+		"items_created", len(items),
+		"conversion_errors", len(conversionErrors))
 
 	return items, nil
 }

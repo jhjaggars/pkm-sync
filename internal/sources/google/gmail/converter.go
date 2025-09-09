@@ -3,6 +3,7 @@ package gmail
 import (
 	"fmt"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 
@@ -87,6 +88,309 @@ func FromGmailMessageWithService(
 	}
 
 	return item, nil
+}
+
+// FromGmailThread converts a Gmail thread to a unified Item.
+func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, service *Service) (*models.Item, error) {
+	if thread == nil {
+		return nil, fmt.Errorf("thread is nil")
+	}
+
+	if thread.Messages == nil || len(thread.Messages) == 0 {
+		return nil, fmt.Errorf("thread %s contains no messages", thread.Id)
+	}
+
+	// Use the first message for basic item properties
+	firstMessage := thread.Messages[0]
+
+	// Extract thread subject (cleaned from first message)
+	subject := getSubject(firstMessage)
+	subject = cleanThreadSubject(subject)
+
+	// Aggregate content from all messages in chronological order
+	content, err := aggregateThreadContent(thread, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to aggregate thread content: %w", err)
+	}
+
+	// Get thread timing from first and last messages
+	threadStart, err := getDate(firstMessage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse thread start date: %w", err)
+	}
+
+	lastMessage := thread.Messages[len(thread.Messages)-1]
+
+	threadEnd, err := getDate(lastMessage)
+	if err != nil {
+		threadEnd = threadStart // Fallback to start time
+	}
+
+	// Build the universal item for the thread
+	item := &models.Item{
+		ID:         thread.Id,
+		Title:      subject,
+		Content:    content,
+		SourceType: "gmail",
+		ItemType:   "thread",
+		CreatedAt:  threadStart,
+		UpdatedAt:  threadEnd,
+		Metadata:   make(map[string]interface{}),
+		Tags:       buildThreadTags(thread, config),
+	}
+
+	// Add thread-specific metadata
+	addThreadMetadata(item, thread, config)
+
+	// Add aggregated recipient information if enabled
+	if config.ExtractRecipients {
+		addThreadRecipientMetadata(item, thread)
+	}
+
+	// Add aggregated header information if enabled
+	if config.IncludeFullHeaders {
+		addThreadHeaderMetadata(item, thread)
+	}
+
+	// Process attachments from all messages in thread
+	if config.DownloadAttachments {
+		var processor *ContentProcessor
+		if service != nil {
+			processor = NewContentProcessorWithService(config, service)
+		} else {
+			processor = NewContentProcessor(config)
+		}
+
+		item.Attachments = processor.ProcessThreadAttachments(thread)
+	}
+
+	return item, nil
+}
+
+// cleanThreadSubject removes common email prefixes from thread subjects.
+func cleanThreadSubject(subject string) string {
+	subject = strings.TrimSpace(subject)
+
+	// Remove common prefixes
+	prefixes := []string{"Re: ", "RE: ", "Fwd: ", "FWD: ", "Fw: ", "FW: "}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(subject, prefix) {
+			subject = strings.TrimSpace(subject[len(prefix):])
+
+			break // Only remove one prefix
+		}
+	}
+
+	return subject
+}
+
+// aggregateThreadContent combines all messages in a thread chronologically.
+func aggregateThreadContent(thread *gmail.Thread, config models.GmailSourceConfig) (string, error) {
+	if len(thread.Messages) == 0 {
+		return "", fmt.Errorf("no messages in thread")
+	}
+
+	// Sort messages by internal date (chronological order)
+	sortedMessages := make([]*gmail.Message, len(thread.Messages))
+	copy(sortedMessages, thread.Messages)
+
+	sort.Slice(sortedMessages, func(i, j int) bool {
+		dateI, _ := getDate(sortedMessages[i])
+		dateJ, _ := getDate(sortedMessages[j])
+
+		return dateI.Before(dateJ)
+	})
+
+	contentParts := make([]string, 0, len(sortedMessages))
+
+	for i, message := range sortedMessages {
+		// Get message header info
+		from := extractSender(message)
+		date, _ := getDate(message)
+
+		// Format message header
+		messageHeader := fmt.Sprintf("From: %s | Date: %s", from, date.Format("2006-01-02 15:04"))
+
+		// Get processed message content
+		messageContent, err := getProcessedBody(message, config)
+		if err != nil {
+			// Log warning but continue with other messages
+			messageContent = fmt.Sprintf("[Error processing message content: %v]", err)
+		}
+
+		// Combine header and content
+		var messagePart string
+		if i == 0 {
+			// First message - no separator above
+			messagePart = fmt.Sprintf("%s\n\n%s", messageHeader, messageContent)
+		} else {
+			// Subsequent messages - add separator
+			messagePart = fmt.Sprintf("---\n\n%s\n\n%s", messageHeader, messageContent)
+		}
+
+		contentParts = append(contentParts, messagePart)
+	}
+
+	return strings.Join(contentParts, "\n\n"), nil
+}
+
+// addThreadMetadata adds thread-specific metadata to the item.
+func addThreadMetadata(item *models.Item, thread *gmail.Thread, config models.GmailSourceConfig) {
+	// Basic thread information
+	item.Metadata["thread_id"] = thread.Id
+	item.Metadata["message_count"] = len(thread.Messages)
+
+	// Thread timing
+	if len(thread.Messages) > 0 {
+		firstMessage := thread.Messages[0]
+		lastMessage := thread.Messages[len(thread.Messages)-1]
+
+		if threadStart, err := getDate(firstMessage); err == nil {
+			item.Metadata["thread_start"] = threadStart
+		}
+
+		if threadEnd, err := getDate(lastMessage); err == nil {
+			item.Metadata["thread_end"] = threadEnd
+		}
+	}
+
+	// Snippet from Gmail (if available)
+	if thread.Snippet != "" {
+		item.Metadata["snippet"] = thread.Snippet
+	}
+
+	// History ID for change tracking
+	if thread.HistoryId != 0 {
+		item.Metadata["history_id"] = thread.HistoryId
+	}
+
+	// Aggregate labels from all messages
+	labelSet := make(map[string]bool)
+
+	for _, message := range thread.Messages {
+		for _, labelId := range message.LabelIds {
+			labelSet[labelId] = true
+		}
+	}
+
+	labels := make([]string, 0, len(labelSet))
+	for label := range labelSet {
+		labels = append(labels, label)
+	}
+
+	item.Metadata["labels"] = labels
+
+	// Thread statistics
+	item.Metadata["has_attachments"] = threadHasAttachments(thread)
+	item.Metadata["unique_senders"] = countUniqueSenders(thread)
+}
+
+// addThreadRecipientMetadata aggregates recipient information from all messages in thread.
+func addThreadRecipientMetadata(item *models.Item, thread *gmail.Thread) {
+	participantSet := make(map[string]bool)
+
+	var allRecipients []EmailRecipient
+
+	for _, message := range thread.Messages {
+		// Add sender
+		sender := extractSender(message)
+		if sender.Email != "" {
+			participantSet[sender.Email] = true
+		}
+
+		// Add all recipients from this message
+		toRecipients := extractRecipients(message, "to")
+		ccRecipients := extractRecipients(message, "cc")
+		bccRecipients := extractRecipients(message, "bcc")
+
+		allMessageRecipients := append(toRecipients, ccRecipients...)
+		allMessageRecipients = append(allMessageRecipients, bccRecipients...)
+
+		for _, recipient := range allMessageRecipients {
+			if recipient.Email != "" {
+				participantSet[recipient.Email] = true
+				allRecipients = append(allRecipients, recipient)
+			}
+		}
+	}
+
+	// Convert to slice for metadata
+	participants := make([]string, 0, len(participantSet))
+	for participant := range participantSet {
+		participants = append(participants, participant)
+	}
+
+	item.Metadata["participants"] = participants
+	item.Metadata["all_recipients"] = allRecipients
+	item.Metadata["participant_count"] = len(participants)
+}
+
+// addThreadHeaderMetadata aggregates header information from all messages if enabled.
+func addThreadHeaderMetadata(item *models.Item, thread *gmail.Thread) {
+	var allHeaders []map[string]string
+
+	for _, message := range thread.Messages {
+		if message.Payload != nil && message.Payload.Headers != nil {
+			messageHeaders := make(map[string]string)
+			messageHeaders["message_id"] = message.Id
+
+			for _, header := range message.Payload.Headers {
+				messageHeaders[strings.ToLower(header.Name)] = header.Value
+			}
+
+			allHeaders = append(allHeaders, messageHeaders)
+		}
+	}
+
+	item.Metadata["all_headers"] = allHeaders
+}
+
+// buildThreadTags builds tags for a thread based on configuration rules.
+func buildThreadTags(thread *gmail.Thread, config models.GmailSourceConfig) []string {
+	var tags []string
+
+	// Use first message for tag building (most thread rules apply to the thread as a whole)
+	if len(thread.Messages) > 0 {
+		tags = buildTags(thread.Messages[0], config)
+	}
+
+	// Add thread-specific tags
+	tags = append(tags, "thread")
+
+	if len(thread.Messages) > 5 {
+		tags = append(tags, "long-thread")
+	}
+
+	if threadHasAttachments(thread) {
+		tags = append(tags, "has-attachments")
+	}
+
+	return tags
+}
+
+// threadHasAttachments checks if any message in the thread has attachments.
+func threadHasAttachments(thread *gmail.Thread) bool {
+	for _, message := range thread.Messages {
+		if hasAttachments(message) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countUniqueSenders counts the number of unique senders in a thread.
+func countUniqueSenders(thread *gmail.Thread) int {
+	senderSet := make(map[string]bool)
+
+	for _, message := range thread.Messages {
+		sender := extractSender(message)
+		if sender.Email != "" {
+			senderSet[sender.Email] = true
+		}
+	}
+
+	return len(senderSet)
 }
 
 // getSubject extracts the subject from Gmail message headers.

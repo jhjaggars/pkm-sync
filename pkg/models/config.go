@@ -1,6 +1,11 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
 
 // Config represents the application configuration.
 type Config struct {
@@ -219,14 +224,11 @@ type GmailSourceConfig struct {
 	// e.g., ["IMPORTANT", "STARRED"]
 	Labels []string `json:"labels" yaml:"labels"`
 	// Custom Gmail search query
-	Query          string `json:"query"           yaml:"query"`
-	IncludeUnread  bool   `json:"include_unread"  yaml:"include_unread"`
-	IncludeRead    bool   `json:"include_read"    yaml:"include_read"`
-	IncludeThreads bool   `json:"include_threads" yaml:"include_threads"`
-	// "individual", "consolidated", "summary"
-	ThreadMode string `json:"thread_mode,omitempty" yaml:"thread_mode,omitempty"`
-	// Max messages in summary (default: 5)
-	ThreadSummaryLength int `json:"thread_summary_length,omitempty" yaml:"thread_summary_length,omitempty"`
+	Query         string `json:"query"          yaml:"query"`
+	IncludeUnread bool   `json:"include_unread" yaml:"include_unread"`
+	IncludeRead   bool   `json:"include_read"   yaml:"include_read"`
+	// NOTE: IncludeThreads, ThreadMode, and ThreadSummaryLength removed
+	// Threads API always processes complete threads
 	// e.g., "30d", "1y"
 	MaxEmailAge string `json:"max_email_age" yaml:"max_email_age"`
 	// e.g., "1d" (exclude very recent)
@@ -270,6 +272,76 @@ type GmailSourceConfig struct {
 	IncludeThreadContext bool          `json:"include_thread_context,omitempty" yaml:"include_thread_context,omitempty"`
 	GroupByThread        bool          `json:"group_by_thread,omitempty"        yaml:"group_by_thread,omitempty"`
 	TaggingRules         []TaggingRule `json:"tagging_rules,omitempty"          yaml:"tagging_rules,omitempty"`
+}
+
+// Validate validates the Gmail source configuration for thread processing.
+func (c *GmailSourceConfig) Validate() error {
+	// Basic validation
+	if c.Name == "" {
+		return fmt.Errorf("gmail source name is required")
+	}
+
+	// Validate email age formats
+	if c.MaxEmailAge != "" {
+		if _, err := time.ParseDuration(c.MaxEmailAge); err != nil {
+			return fmt.Errorf("invalid max_email_age format: %w", err)
+		}
+	}
+
+	if c.MinEmailAge != "" {
+		if _, err := time.ParseDuration(c.MinEmailAge); err != nil {
+			return fmt.Errorf("invalid min_email_age format: %w", err)
+		}
+	}
+
+	// Validate rate limiting settings
+	if c.RequestDelay < 0 {
+		return fmt.Errorf("request_delay cannot be negative")
+	}
+
+	if c.MaxRequests < 0 {
+		return fmt.Errorf("max_requests cannot be negative")
+	}
+
+	if c.BatchSize < 0 {
+		return fmt.Errorf("batch_size cannot be negative")
+	}
+
+	if c.BatchSize > 500 {
+		return fmt.Errorf("batch_size cannot exceed 500 (Gmail API limit)")
+	}
+
+	// Validate attachment size format
+	if c.MaxAttachmentSize != "" {
+		// Simple validation - should be parseable as size
+		if !strings.Contains(c.MaxAttachmentSize, "B") &&
+			!strings.Contains(c.MaxAttachmentSize, "K") &&
+			!strings.Contains(c.MaxAttachmentSize, "M") &&
+			!strings.Contains(c.MaxAttachmentSize, "G") {
+			return fmt.Errorf("invalid max_attachment_size format, should include size unit (B, KB, MB, GB)")
+		}
+	}
+
+	// Thread processing validation (with obsolete field warnings)
+	// Log warnings for obsolete fields but don't fail validation
+	var warnings []string
+
+	// Note: We can't directly check for obsolete fields since they're removed from struct
+	// But we can validate thread-related settings that might conflict
+
+	if c.IncludeThreadContext && c.GroupByThread {
+		warnings = append(warnings,
+			"both include_thread_context and group_by_thread are set - threads are always processed with context")
+	}
+
+	// Log warnings if any
+	if len(warnings) > 0 {
+		for _, warning := range warnings {
+			fmt.Fprintf(os.Stderr, "Warning: Gmail config '%s': %s\n", c.Name, warning)
+		}
+	}
+
+	return nil
 }
 
 type TaggingRule struct {
