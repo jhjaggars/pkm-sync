@@ -192,6 +192,23 @@ func (p *ContentProcessor) filterAttachments(attachments []models.Attachment) []
 	return filtered
 }
 
+// ProcessThreadAttachments processes attachments from all messages in a thread.
+func (p *ContentProcessor) ProcessThreadAttachments(thread *gmail.Thread) []models.Attachment {
+	if thread.Messages == nil || !p.config.DownloadAttachments {
+		return []models.Attachment{}
+	}
+
+	var allAttachments []models.Attachment
+
+	// Process attachments from all messages in the thread
+	for _, message := range thread.Messages {
+		messageAttachments := p.ProcessEmailAttachments(message)
+		allAttachments = append(allAttachments, messageAttachments...)
+	}
+
+	return allAttachments
+}
+
 // isAllowedAttachmentType checks if an attachment type is allowed based on configuration.
 func (p *ContentProcessor) isAllowedAttachmentType(attachment models.Attachment) bool {
 	// Extract extension from filename

@@ -156,7 +156,7 @@ func TestService_buildQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			service := &Service{config: tt.config}
-			result := service.buildQuery(tt.since)
+			result := service.BuildQuery(tt.since)
 
 			if result != tt.expected {
 				t.Errorf("buildQuery() = %v, want %v", result, tt.expected)

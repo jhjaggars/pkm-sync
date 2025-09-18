@@ -104,7 +104,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 ## Current Implementation Status
 
 ### Sources
-- ✅ **Gmail** - Fully implemented with multi-instance support, advanced filtering, thread grouping, and performance optimizations
+- ✅ **Gmail** - Fully implemented with **Gmail Threads API migration**, multi-instance support, advanced filtering, thread grouping, and performance optimizations
 - ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
 - ✅ **Google Drive** - Fully implemented for document export
 - 🔧 **Slack** - Configuration ready, implementation pending
@@ -216,14 +216,27 @@ transformers:
 - **Memory efficient**: Processes items in-place where possible
 - **Chainable**: Multiple transformers compose efficiently
 
-## Gmail Thread Grouping
+## Gmail Threads API Migration
 
-The Gmail source supports intelligent thread grouping to reduce email clutter and improve organization.
+The Gmail source has been **migrated to use the Gmail Threads API** for improved performance and better thread handling. This migration provides native thread processing and more efficient data retrieval.
 
-### Thread Modes
-- **`individual`** (default) - Each email is treated as a separate item
-- **`consolidated`** - All messages in a thread are combined into a single file
-- **`summary`** - Creates summary files with key messages from each thread
+### Key Migration Benefits
+- **Native thread support** - Uses Gmail's Threads API instead of Messages API for better thread cohesion
+- **Performance improvements** - Concurrent thread fetching with rate limiting and retry logic
+- **Enhanced error handling** - Thread-specific error context and recovery strategies
+- **Backward compatibility** - Maintains existing message interface while adding thread capabilities
+
+### Thread Processing Implementation
+- **Concurrent fetching** - Up to 10 concurrent workers for thread retrieval with configurable delays
+- **Intelligent batching** - Optimized batch processing for large mailboxes (>1000 messages)
+- **Retry logic** - Exponential backoff for rate limiting and temporary errors
+- **Error recovery** - Graceful handling of individual thread failures without stopping processing
+
+### Thread API Features
+- **Full thread details** - Retrieves complete thread with all messages in proper order
+- **Message extraction** - Converts thread data to maintain compatibility with existing message processing
+- **Performance logging** - Detailed metrics on thread retrieval and processing performance
+- **Configurable delays** - User-configurable request delays to respect API limits
 
 ### Configuration Example
 ```yaml
@@ -231,22 +244,36 @@ sources:
   gmail_work:
     type: gmail
     gmail:
-      include_threads: true           # Enable thread processing
+      include_threads: true           # Enable thread processing (now uses Threads API)
       thread_mode: "summary"          # Use summary mode
       thread_summary_length: 3        # Show 3 key messages per thread
+      request_delay: 50ms             # Configurable delay between API requests
+      batch_size: 100                 # Batch size for large mailbox processing
       query: "in:inbox to:me"
 ```
+
+### Thread Modes
+- **`individual`** (default) - Each email is treated as a separate item
+- **`consolidated`** - All messages in a thread are combined into a single file
+- **`summary`** - Creates summary files with key messages from each thread
 
 ### Thread Processing Features
 - **Smart message selection** - Prioritizes different senders, longer content, attachments
 - **Filename sanitization** - No spaces, command-line friendly filenames
 - **Thread metadata** - Participants, duration, message count
 - **Subject cleaning** - Removes "Re:", "Fwd:" prefixes
+- **Chronological ordering** - Messages sorted by date within threads
 
 ### Output Examples
 - Consolidated: `Thread_PR-discussion-fix-security-issue_8-messages.md`
 - Summary: `Thread-Summary_meeting-notes-weekly-sync_5-messages.md`
 - Individual: `Re-Project-status-update.md`
+
+### Implementation Details
+The migration is implemented in:
+- `internal/sources/google/gmail/service.go` - Main service with Threads API integration
+- `internal/sources/google/gmail/converter.go` - Thread-to-Item conversion logic
+- `internal/sources/google/gmail/processor.go` - Content processing for threads and messages
 
 ## Development Workflow
 
