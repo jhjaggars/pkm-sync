@@ -82,7 +82,7 @@ func GetDefaultConfig() *models.Config {
 			},
 			"google_meetings": {
 				Enabled: true,
-				Type:    "google_meetings",
+				Type:    "google_calendar",
 				Google: models.GoogleSourceConfig{
 					CalendarID:        "primary",
 					DownloadDocs:      true,
