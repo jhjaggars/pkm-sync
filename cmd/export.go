@@ -24,11 +24,14 @@ var driveCmd = &cobra.Command{
 	Use:   "drive",
 	Short: "Export Google Drive documents to markdown",
 	Long: `Export Google Drive documents (Google Docs, Sheets, etc.) to markdown files.
-	
+
 You can export docs from:
 - A specific calendar event by ID
 - All events in a date range
-- Today's events (default)`,
+- Today's events (default)
+
+Or use the fetch subcommand to fetch a single document by URL:
+  pkm-sync drive fetch <URL>`,
 	RunE: runDriveCommand,
 }
 

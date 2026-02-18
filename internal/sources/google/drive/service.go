@@ -172,6 +172,57 @@ func extractFileIDFromDriveURL(url string) string {
 	return ""
 }
 
+// ExtractFileID extracts file ID from various Google Drive and Docs URL patterns.
+// Supports:
+// - docs.google.com/document/d/{ID}.
+// - docs.google.com/spreadsheets/d/{ID}.
+// - docs.google.com/presentation/d/{ID}.
+// - drive.google.com/file/d/{ID}.
+// - drive.google.com/open?id={ID}.
+func ExtractFileID(url string) (string, error) {
+	// Try docs pattern (works for documents, spreadsheets, presentations)
+	if fileID := extractFileIDFromDocsURL(url); fileID != "" {
+		return fileID, nil
+	}
+
+	// Try drive file pattern
+	if fileID := extractFileIDFromDriveURL(url); fileID != "" {
+		return fileID, nil
+	}
+
+	// Try drive.google.com/open?id= pattern
+	fileID := extractFileIDFromOpenURL(url)
+	if fileID != "" {
+		return fileID, nil
+	}
+
+	return "", fmt.Errorf("unable to extract file ID from URL: %s", url)
+}
+
+// extractFileIDFromOpenURL extracts file ID from drive.google.com/open?id= URLs.
+func extractFileIDFromOpenURL(url string) string {
+	if !strings.Contains(url, "drive.google.com/open") {
+		return ""
+	}
+
+	if !strings.Contains(url, "id=") {
+		return ""
+	}
+
+	parts := strings.Split(url, "id=")
+	if len(parts) < 2 {
+		return ""
+	}
+
+	fileID := parts[1]
+	// Remove any trailing parameters
+	if idx := strings.Index(fileID, "&"); idx != -1 {
+		fileID = fileID[:idx]
+	}
+
+	return fileID
+}
+
 // ExportAttachedDocsFromEvent exports all Google Docs attached to an event.
 func (s *Service) ExportAttachedDocsFromEvent(eventDescription, outputDir string) ([]string, error) {
 	fileIDs, err := s.GetAttachmentsFromEvent(eventDescription)
@@ -245,4 +296,71 @@ func sanitizeFilename(filename string) string {
 	}
 
 	return filename
+}
+
+// Google Workspace MIME types.
+const (
+	MimeTypeGoogleDoc          = "application/vnd.google-apps.document"
+	MimeTypeGoogleSheet        = "application/vnd.google-apps.spreadsheet"
+	MimeTypeGooglePresentation = "application/vnd.google-apps.presentation"
+)
+
+// Export MIME types.
+const (
+	MimeTypePlainText = "text/plain"
+	MimeTypeHTML      = "text/html"
+	MimeTypeCSV       = "text/csv"
+)
+
+// Format constants.
+const (
+	FormatHTML = "html"
+	FormatMD   = "md"
+	FormatTXT  = "txt"
+	FormatCSV  = "csv"
+)
+
+// GetExportMimeType returns the appropriate export MIME type for a given file type and format.
+func GetExportMimeType(fileMimeType, format string) (string, error) {
+	switch fileMimeType {
+	case MimeTypeGoogleDoc:
+		switch format {
+		case FormatTXT:
+			return MimeTypePlainText, nil
+		case FormatHTML, FormatMD:
+			return MimeTypeHTML, nil
+		default:
+			return "", fmt.Errorf("unsupported format '%s' for Google Docs (supported: txt, html, md)", format)
+		}
+	case MimeTypeGoogleSheet:
+		switch format {
+		case FormatCSV:
+			return MimeTypeCSV, nil
+		case FormatHTML:
+			return MimeTypeHTML, nil
+		default:
+			return "", fmt.Errorf("unsupported format '%s' for Google Sheets (supported: csv, html)", format)
+		}
+	case MimeTypeGooglePresentation:
+		switch format {
+		case FormatTXT:
+			return MimeTypePlainText, nil
+		case FormatHTML:
+			return MimeTypeHTML, nil
+		default:
+			return "", fmt.Errorf("unsupported format '%s' for Google Slides (supported: txt, html)", format)
+		}
+	default:
+		return "", fmt.Errorf("unsupported file type: %s (only Google Docs, Sheets, and Slides are supported)", fileMimeType)
+	}
+}
+
+// ExportDocument exports a Google Workspace document and returns the content as a ReadCloser.
+func (s *Service) ExportDocument(fileID, exportMimeType string) (io.ReadCloser, error) {
+	resp, err := s.client.Files.Export(fileID, exportMimeType).Download()
+	if err != nil {
+		return nil, fmt.Errorf("unable to export document: %w", err)
+	}
+
+	return resp.Body, nil
 }

@@ -365,8 +365,8 @@ func displayEventsAsJSON(events []*calendar.Event, calendarService *internalcale
 		outputEvents[i] = map[string]interface{}{
 			"id":          modelEvent.ID,
 			"summary":     modelEvent.Summary,
-			"start_time":  modelEvent.StartTime,
-			"end_time":    modelEvent.EndTime,
+			"start_time":  modelEvent.Start,
+			"end_time":    modelEvent.End,
 			"is_all_day":  modelEvent.IsAllDay,
 			"location":    modelEvent.Location,
 			"description": modelEvent.Description,
