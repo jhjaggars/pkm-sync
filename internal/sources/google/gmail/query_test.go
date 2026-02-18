@@ -23,12 +23,28 @@ func TestBuildQuery(t *testing.T) {
 			expected: "after:2024/01/01",
 		},
 		{
-			name: "with labels",
+			name: "with labels (OR logic)",
 			config: models.GmailSourceConfig{
 				Labels: []string{"IMPORTANT", "STARRED"},
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 label:IMPORTANT label:STARRED",
+			expected: "after:2024/01/01 (label:IMPORTANT OR label:STARRED)",
+		},
+		{
+			name: "with single label",
+			config: models.GmailSourceConfig{
+				Labels: []string{"IMPORTANT"},
+			},
+			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			expected: "after:2024/01/01 (label:IMPORTANT)",
+		},
+		{
+			name: "with multiple labels (6 labels)",
+			config: models.GmailSourceConfig{
+				Labels: []string{"1-gtd", "0-leadership", "0-peers", "0-staff", "IMPORTANT", "STARRED"},
+			},
+			since:    time.Date(2024, 2, 17, 0, 0, 0, 0, time.UTC),
+			expected: "after:2024/02/17 (label:1-gtd OR label:0-leadership OR label:0-peers OR label:0-staff OR label:IMPORTANT OR label:STARRED)",
 		},
 		{
 			name: "with custom query",
@@ -110,7 +126,7 @@ func TestBuildQuery(t *testing.T) {
 				RequireAttachments: true,
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 label:IMPORTANT (subject:meeting) (from:company.com) (to:work.com) -from:noreply.com is:unread has:attachment",
+			expected: "after:2024/01/01 (label:IMPORTANT) (subject:meeting) (from:company.com) (to:work.com) -from:noreply.com is:unread has:attachment",
 		},
 		{
 			name: "with invalid max email age format",
@@ -128,7 +144,7 @@ func TestBuildQuery(t *testing.T) {
 				ExcludeFromDomains: []string{"", "spam.com", ""},
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 label:IMPORTANT (from:example.com) -from:spam.com",
+			expected: "after:2024/01/01 (label:IMPORTANT) (from:example.com) -from:spam.com",
 		},
 	}
 
@@ -164,7 +180,16 @@ func TestBuildQueryWithRange(t *testing.T) {
 			},
 			start:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			end:      time.Date(2024, 1, 31, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 before:2024/01/31 label:IMPORTANT",
+			expected: "after:2024/01/01 before:2024/01/31 (label:IMPORTANT)",
+		},
+		{
+			name: "range with multiple labels",
+			config: models.GmailSourceConfig{
+				Labels: []string{"IMPORTANT", "STARRED", "INBOX"},
+			},
+			start:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 1, 31, 0, 0, 0, 0, time.UTC),
+			expected: "after:2024/01/01 before:2024/01/31 (label:IMPORTANT OR label:STARRED OR label:INBOX)",
 		},
 	}
 
