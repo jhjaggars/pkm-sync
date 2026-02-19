@@ -49,6 +49,7 @@ Commands:
 		if credentialsPath != "" {
 			config.SetCustomCredentialsPath(credentialsPath)
 		}
+
 		if configDir != "" {
 			config.SetCustomConfigDir(configDir)
 		}

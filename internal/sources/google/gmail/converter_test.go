@@ -59,6 +59,7 @@ func TestFromGmailMessage(t *testing.T) {
 				// Test link extraction via transformer
 				linkTransformer := transform.NewLinkExtractionTransformer()
 				linkTransformer.Configure(map[string]interface{}{"enabled": true})
+
 				transformedItems, err := linkTransformer.Transform([]models.ItemInterface{models.AsItemInterface(item)})
 				if err != nil || len(transformedItems) != 1 {
 					return false

@@ -167,7 +167,7 @@ func FromGmailMessage(msg interface{}, config interface{}) (*Item, error) {
 	return nil, fmt.Errorf("use gmail.FromGmailMessage instead")
 }
 
-// Migrate from existing CalendarEvent model.
+// FromCalendarEvent creates a BasicItem from an existing CalendarEvent model.
 func FromCalendarEvent(event *CalendarEvent) *Item {
 	item := &Item{
 		ID:         event.ID,
@@ -248,7 +248,7 @@ func (t *Thread) GetMessages() []ItemInterface         { return t.Messages }
 func (t *Thread) SetMessages(messages []ItemInterface) { t.Messages = messages }
 func (t *Thread) AddMessage(message ItemInterface)     { t.Messages = append(t.Messages, message) }
 
-// JSON serialization for BasicItem.
+// MarshalJSON implements custom JSON serialization for BasicItem.
 func (b *BasicItem) MarshalJSON() ([]byte, error) {
 	// Use an alias to avoid infinite recursion
 	type Alias BasicItem
@@ -263,7 +263,7 @@ func (b *BasicItem) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*Alias)(b))
 }
 
-// JSON serialization for Thread.
+// MarshalJSON implements custom JSON serialization for Thread.
 func (t *Thread) MarshalJSON() ([]byte, error) {
 	// Create a struct that includes embedded BasicItem fields and Messages
 	type ThreadJSON struct {
