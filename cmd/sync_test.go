@@ -249,6 +249,7 @@ func TestParseSinceTime_SpecialValues(t *testing.T) {
 
 func TestParseSinceTime_TodayReturnsCorrectDate(t *testing.T) {
 	now := time.Now()
+
 	result, err := parseSinceTime("today")
 	if err != nil {
 		t.Fatalf("parseSinceTime(\"today\") failed: %v", err)
