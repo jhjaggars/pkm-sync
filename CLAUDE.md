@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and Development Commands
 
+**Requirements**: Go 1.24.4 or later
+
 ```bash
 # Build the application
-go build -o pkm-sync ./cmd
+go build -v ./...              # Build all packages (mirrors CI)
+go build -o pkm-sync ./cmd     # Build named binary
 
 # Run the application (requires OAuth setup first)
 ./pkm-sync setup             # Verify authentication configuration
@@ -31,14 +34,6 @@ go build -o pkm-sync ./cmd
 # Development setup
 ./scripts/install-hooks.sh   # Install Git hooks (pre-commit formatting)
 make check-golangci-version  # Verify golangci-lint v2.0+ installation
-
-# GitHub interactions (always use gh CLI)
-gh issue list                 # List repository issues
-gh issue view <number>        # View specific issue
-gh issue create              # Create new issue
-gh pr list                   # List pull requests
-gh pr view <number>          # View specific pull request
-gh pr create                 # Create new pull request
 ```
 
 ## Architecture Overview
@@ -47,14 +42,17 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 
 ### CLI Framework
 - Uses **Cobra** for command structure with persistent flags
-- Root command (`cmd/root.go`) handles global flags: `--credentials`, `--config-dir`
+- Root command (`cmd/root.go`) handles global flags: `--credentials`, `--config-dir`, `--debug`, `--start`, `--end`
 - Main commands: `gmail`, `calendar`, `drive`, `config`, `setup`
 - Global flags are processed in `PersistentPreRun` to configure paths
 
 ### Multi-Source Architecture
 - **Universal interfaces** (`pkg/interfaces/`) for Source, Target, and Transformer abstractions
-- **Universal data model** (`pkg/models/item.go`) with ItemInterface for consistent data representation
-  - **ItemInterface**: Universal interface for all item types with getter/setter methods
+- **Universal data model** (`pkg/models/item.go`) with segregated interface hierarchy:
+  - **CoreItem**: Base interface with ID, title, source type
+  - **SourcedItem**: Extends CoreItem with source URL and metadata
+  - **FullItem**: Composed interface (SourcedItem + TimestampedItem + EnrichedItem + SerializableItem)
+  - **ItemInterface**: Backward-compatible alias for FullItem
   - **BasicItem**: Standard implementation for emails, calendar events, documents
   - **Thread**: Specialized implementation for email threads with embedded messages
 - **Source implementations** in `internal/sources/` (Google Calendar, Gmail, Drive)
@@ -73,7 +71,8 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 
 ### Authentication Flow
 - **OAuth 2.0 only** (no ADC support) with Google Calendar, Drive, and Gmail APIs
-- Enhanced copy/paste flow: supports pasting full callback URL or just auth code
+- **Primary method**: Automatic web server flow (opens browser, captures callback on localhost)
+- **Fallback method**: Manual copy/paste flow (supports pasting full callback URL or auth code)
 - Automatic extraction of auth code from URLs with `extractAuthCode()` function
 - Token and credentials stored in platform-specific config directories
 - **Gmail requires additional scope**: `gmail.readonly` for email access
@@ -93,6 +92,8 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - `google.golang.org/api/gmail/v1` - Gmail API
 - `golang.org/x/oauth2/google` - OAuth 2.0 client
 - `gopkg.in/yaml.v3` - YAML configuration parsing
+- `github.com/JohannesKaufmann/html-to-markdown/v2` - HTML to Markdown conversion
+- `github.com/tj/go-naturaldate` - Natural language date parsing
 
 ### Development Tools
 - **golangci-lint v2.0+** - Required for v2 configuration format
@@ -107,8 +108,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - ✅ **Gmail** - Fully implemented with multi-instance support, advanced filtering, thread grouping, and performance optimizations
 - ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
 - ✅ **Google Drive** - Fully implemented for document export
-- 🔧 **Slack** - Configuration ready, implementation pending
-- 🔧 **Jira** - Configuration ready, implementation pending
+- 🔧 **Additional sources** (Slack, Jira) are planned but not yet implemented
 
 ### Targets
 - ✅ **Obsidian** - Implemented with YAML frontmatter and hierarchical structure
@@ -138,8 +138,9 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - Example: `pkm-sync calendar --start 2025-01-01 --end 2025-01-31`
 
 - **`drive`** - Export Google Drive documents to markdown
+  - `drive fetch <URL>` - Fetch specific document by URL (supports txt, md, html, csv formats)
   - Drive-specific functionality for document export
-  - Example: `pkm-sync drive --event-id 12345 --output ./docs`
+  - Example: `pkm-sync drive fetch https://docs.google.com/document/d/...`
 
 ### Utility Commands
 - **`setup`** - Verify authentication configuration
@@ -147,6 +148,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - Provides clear error messages and instructions
 
 - **`config`** - Manage configuration files
+  - Subcommands: `init`, `show`, `path`, `edit`, `validate`
   - Configuration management and validation
 
 ## OAuth Setup Requirements
@@ -163,14 +165,13 @@ Users must:
 - Required scopes: `gmail.readonly` (automatically requested)
 - Same OAuth credentials work for all Google services
 
-The application uses an automatic web server-based OAuth flow that opens the user's browser and captures the authorization code automatically. If the web server fails, it falls back to the manual copy/paste flow for compatibility.
-
 ## Transformer Pipeline System
 
 The transformer pipeline provides a configurable, chainable processing system for items between source fetch and target export. This enables content processing features like filtering, tagging, content cleanup, and future AI analysis.
 
 ### Core Architecture
-- **Transformer Interface**: Simple `Transform([]ItemInterface) -> []ItemInterface` pattern
+- **Transformer Interface**: `Transform([]models.FullItem) ([]models.FullItem, error)` pattern
+- **Segregated interfaces**: `ContentTransformer` for content modification, `MetadataTransformer` for metadata enrichment
 - **TransformPipeline**: Chains multiple transformers with configurable error handling
 - **Configuration-driven**: Enable/disable transformers and configure processing order
 - **Interface-based**: Works seamlessly with ItemInterface system supporting Thread and BasicItem types
@@ -197,9 +198,12 @@ transformers:
 ```
 
 ### Built-in Transformers
-- **`content_cleanup`**: Normalizes whitespace, removes email prefixes ("Re:", "Fwd:")
+- **`content_cleanup`**: Converts HTML to Markdown, strips quoted text, normalizes whitespace, removes email prefixes ("Re:", "Fwd:")
 - **`auto_tagging`**: Adds tags based on content patterns and source metadata
 - **`filter`**: Filters items by content length, source type, required tags
+- **`link_extraction`**: Extracts and indexes URLs from content
+- **`signature_removal`**: Removes email signatures from content
+- **`thread_grouping`**: Groups related emails into conversation threads
 
 ### Error Handling Strategies
 - **`fail_fast`**: Stop processing on first transformer error
@@ -210,11 +214,6 @@ transformers:
 - **Sync Engine**: Automatically applies transformations between fetch and export
 - **Configuration**: Transformers configured in main config.yaml
 - **CLI**: Fully backward compatible - no CLI changes required
-
-### Performance
-- **Minimal overhead**: <5% performance impact when enabled
-- **Memory efficient**: Processes items in-place where possible
-- **Chainable**: Multiple transformers compose efficiently
 
 ## Gmail Thread Grouping
 
@@ -250,77 +249,30 @@ sources:
 
 ## Development Workflow
 
-### Initial Setup
+### Development Setup
 ```bash
-# Clone the repository
+# Clone the repository and install Git hooks (REQUIRED)
 git clone <repository-url>
 cd pkm-sync
-
-# REQUIRED: Install Git hooks for development
 ./scripts/install-hooks.sh
 ```
 
-**⚠️ Important:** The pre-commit hook installation is **required** for all contributors. It ensures code quality by running comprehensive checks (formatting, linting, testing, building) before each commit. Commits will be blocked if quality checks fail.
-
-### Git Hooks
-The repository includes development Git hooks to maintain code quality:
-
-- **pre-commit**: Comprehensive code quality enforcement before each commit
-- Automatically runs `go fmt` on staged Go files
-- Executes full CI pipeline (`make ci`) including linting, testing, and building
-- Prevents commits if any quality checks fail
-- Provides helpful diagnostic commands when failures occur
-
-To install hooks after cloning:
-```bash
-./scripts/install-hooks.sh
-```
-
-The pre-commit hook will:
-1. Format any staged Go files with `go fmt`
-2. Run the complete CI pipeline (`make ci`):
-   - **Lint**: Execute `golangci-lint` with comprehensive rules
-   - **Test**: Run all unit tests with race detection
-   - **Build**: Verify the project compiles successfully
-3. Block the commit if any step fails
-4. Provide clear feedback and diagnostic suggestions
-
-**Without pre-commit hooks:** Pull requests may fail CI checks, requiring additional commits to fix formatting and quality issues. Installing hooks prevents this by catching issues locally before they're pushed.
+**⚠️ Important:** The pre-commit hook runs `go fmt` and `make ci` (lint, test, build) before each commit. Commits will be blocked if quality checks fail. This is **required** for all contributors to prevent CI failures.
 
 ### GitHub Workflow
-Always use the `gh` CLI for GitHub interactions:
-
-```bash
-# List and manage issues
-gh issue list
-gh issue view <number>
-gh issue create --title "Bug: Description" --body "Details"
-
-# List and manage pull requests  
-gh pr list
-gh pr view <number>
-gh pr create --title "feat: Description" --body "Details"
-gh pr merge <number>
-
-# Repository management
-gh repo view
-gh repo clone <owner/repo>
-gh release list
-```
-
-**Important:** When working with GitHub programmatically or in scripts, always use `gh` CLI commands instead of direct API calls or other GitHub tools.
+**Always use `gh` CLI for GitHub interactions** - issues, PRs, repository management. Do not use direct API calls or other GitHub tools.
 
 ### Testing
 ```bash
-# Run all tests
-go test ./...
+# Run all tests (preferred)
+make test
 
-# Run specific package tests
-go test ./cmd
-go test ./internal/sources/google/gmail
-
-# Run with verbose output
-go test -v ./...
+# Run tests directly
+go test ./...                                    # All tests
+go test -race ./...                              # With race detection
+go test -bench=. ./...                           # Run benchmarks
+go test ./cmd                                    # Specific package
+go test -v ./internal/sources/google/gmail       # Verbose output
 ```
 
 ## Agent Development System
@@ -351,173 +303,13 @@ The repository includes a Claude Code agent coordination system located in `.cla
 └── settings.local.json  # Local permissions (NOT committed)
 ```
 
-### Serena MCP Integration (REQUIRED)
-All agents working on this project must use the Serena MCP server for intelligent code analysis and modification. See `CONTRIBUTING.md` for setup instructions.
+All code changes must pass `make ci` before completion:
+- **Lint**: `golangci-lint run` with comprehensive rules
+- **Test**: `go test ./...` with race detection
+- **Build**: `go build -v ./...`
 
-#### Key Serena Operations
-```bash
-# Context gathering
-mcp__serena__list_memories                    # Check available context
-mcp__serena__get_symbols_overview <file>      # Understand file structure
-mcp__serena__find_symbol <name> <file>        # Locate specific symbols
-
-# Surgical code modifications
-mcp__serena__replace_symbol_body <symbol> <file> <new_implementation>
-mcp__serena__insert_after_symbol <symbol> <file> <additional_code>
-mcp__serena__insert_before_symbol <symbol> <file> <setup_code>
-
-# Context sharing between agents
-mcp__serena__write_memory "<task_name>_<agent_type>" """
-Agent findings, changes made, performance results, next steps
-"""
-mcp__serena__read_memory "<task_name>_analysis"  # Get previous agent context
-```
-
-### Mandatory CI Compliance
-**CRITICAL**: All agents must ensure `make ci` passes before completing any task involving code changes.
-
-```bash
-# Required CI verification for every task:
-make ci
-
-# This includes:
-# - go fmt (code formatting)  
-# - golangci-lint run (comprehensive linting)
-# - go test ./... (all unit tests with race detection)
-# - go build ./cmd (compilation verification)
-```
-
-### Task Completion Requirements
-**A task is NEVER complete unless ALL conditions are met:**
-
-1. **Implementation**: Complete the requested feature/fix using Serena MCP operations
-2. **CI Verification**: Run `make ci` and ensure exit code is 0
-3. **Context Update**: Update Serena memory with findings and changes
-4. **Cleanup**: Remove temporary files (preserve Serena memories)
-
-#### Required Context Updates
-```bash
-# Task completion summary (REQUIRED)
-mcp__serena__write_memory "<task_name>_completion" """
-## Task Completion Summary
-- Files modified: [list with specific symbols changed]
-- Functions/methods added/updated: [specific symbols]
-- Integration points affected: [interfaces, dependencies]
-- CI status: PASSED
-- Issues encountered & resolved: [specific details]
-- Context for next agent: [handoff information]
-"""
-```
-
-### File Management
-```bash
-# Clean up temporary files (NOT Serena memories)
-rm -f *.tmp *.temp *.log coverage.out cpu.prof mem.prof
-rm -rf temp/ tmp/ .temp_*
-
-# Preserve Serena memories for agent context transfer
-# Do NOT delete: task_architecture, task_implementation, etc.
-```
-
-### Agent Workflow Patterns
-Agents should follow established workflow patterns documented in `.claude/agents/coordinator.md`:
-
-- **Progressive Implementation**: Staged development with handoff points (89% success rate)
-- **Parallel Analysis**: Multiple agents analyze different aspects simultaneously  
-- **Specialized Chains**: Sequential agents for focused tasks (performance, security, debugging)
-- **Technology Detection**: Automatic adaptation to Go, Python, JavaScript, etc.
-
-### Integration with Project Standards
-Agent development follows the same standards as manual development:
-- **Pre-commit hooks**: All code changes go through formatting, linting, and testing
-- **GitHub workflow**: Use `gh` CLI for issue and PR management  
-- **Configuration validation**: Ensure `./pkm-sync config validate` passes
-- **Documentation updates**: Update relevant docs when changing functionality
-
-## Enhanced Agent Coordination
-
-The repository includes enhanced agent coordination capabilities that provide better agent selection, technology adaptation, and fallback strategies within Claude Code. These enhancements build on the existing agent system while maintaining full backward compatibility.
-
-### Coordination Features
-
-- **Technology Detection**: Automatic detection of Go, Python, JavaScript, Rust projects with appropriate tooling
-- **Agent Fallback**: Strategies for when specialist agents aren't available
-- **Proven Patterns**: Workflow patterns based on successful project executions (like Issue #28)
-- **Quality Assurance**: Maintains CI compliance and code quality regardless of agent availability
-
-### Agent Fallback Strategies
-
-When specialist agents aren't available, the coordinator adapts using proven strategies:
-
-- **Security tasks** → feature-architect + security checklists
-- **Performance work** → code-implementer + benchmarking focus  
-- **Bug hunting** → code-implementer + debugging methodology
-- **Documentation** → technical-writer + user-focused templates
-
-The system maintains quality through enhanced validation and testing when specialists are unavailable.
-
-### Technology Adaptation
-
-The coordination system automatically detects project type and adapts accordingly:
-
-```bash
-# Go projects
-TEST_CMD="go test ./..."
-LINT_CMD="golangci-lint run"  
-BUILD_CMD="go build ./cmd"
-
-# Python projects  
-TEST_CMD="pytest"
-LINT_CMD="flake8 . && mypy ."
-BUILD_CMD="python -m build"
-
-# JavaScript projects
-TEST_CMD="npm test"
-LINT_CMD="eslint . && prettier --check ."
-BUILD_CMD="npm run build"
-```
-
-### Usage Examples
-
-#### Coordination Command
-```bash
-# Use the coordinator for complex tasks
-/coordinate "implement Gmail threads API migration"
-```
-
-The coordinator will:
-1. Assess project maturity and constraints
-2. Select appropriate agent workflow pattern  
-3. Adapt commands for detected technology (Go)
-4. Apply fallback strategies if needed
-5. Ensure CI compliance throughout
-
-#### Example Output
-```markdown
-## Coordination Plan: Gmail Threads API Migration
-
-**Pattern**: Progressive Implementation (89% proven success rate)
-**Technology**: Go CLI detected  
-**Duration**: 8-11 hours
-**Agent Sequence**: feature-architect → code-implementer → test-strategist → code-reviewer
-
-**Commands**:
-- Test: go test ./...
-- Lint: golangci-lint run
-- Build: go build ./cmd
-
-**Quality Gates**: 
-- CI must pass: make ci
-- Performance: <5% overhead
-- Backward compatibility: pre-alpha project, breaking changes OK
-```
-## Summary
-
-The enhanced agent coordination system provides practical improvements to Claude Code workflows:
-
-- **Simple, effective**: Technology detection and agent fallback without complexity
-- **Proven patterns**: Based on successful project executions (Issue #28: 89% success rate) 
-- **Backward compatible**: All existing agent functionality preserved
-- **Quality focused**: Maintains CI compliance and code standards
-
-The system enhances coordination effectiveness while remaining simple to understand and use.
+### Agent Integration
+Agents must follow project standards:
+- Run `make ci` before completing tasks
+- Use `gh` CLI for GitHub interactions
+- Update relevant documentation when changing functionality
