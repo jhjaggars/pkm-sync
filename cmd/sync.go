@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -343,36 +342,12 @@ func createTargetWithConfig(name string, cfg *models.Config) (interfaces.Target,
 }
 
 func parseSinceTime(since string) (time.Time, error) {
-	now := time.Now()
-
-	switch since {
-	case "today":
-		return now.Truncate(24 * time.Hour), nil
-	case "yesterday":
-		return now.Add(-24 * time.Hour).Truncate(24 * time.Hour), nil
+	if since == "" {
+		return time.Time{}, fmt.Errorf("empty since string")
 	}
 
-	// Try relative duration (7d, 2h, etc.)
-	// Go's ParseDuration doesn't handle "d" for days, so convert explicitly
-	if strings.HasSuffix(since, "d") {
-		daysStr := strings.TrimSuffix(since, "d")
-		if daysInt, err := strconv.Atoi(daysStr); err == nil && daysInt >= 0 {
-			daysDuration := time.Duration(daysInt) * 24 * time.Hour
-
-			return now.Add(-daysDuration), nil
-		}
-	}
-
-	if duration, err := time.ParseDuration(since); err == nil {
-		return now.Add(-duration), nil
-	}
-
-	// Try absolute date
-	if t, err := time.Parse("2006-01-02", since); err == nil {
-		return t, nil
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse since time '%s': supported formats are 'today', 'yesterday', relative durations (7d, 24h), or absolute dates (2006-01-02)", since)
+	// Delegate to the unified date parser
+	return parseDateTime(since)
 }
 
 // getEnabledSources returns list of sources that are enabled in the configuration.

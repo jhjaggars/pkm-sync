@@ -280,13 +280,12 @@ func TestParseSinceTime_InvalidInputs(t *testing.T) {
 	testCases := []string{
 		"",
 		"invalid",
-		"7days", // Should be "7d"
-		"1week",
 		"abc",
 		"-1d",  // Negative days should be invalid
 		"-5d",  // Negative days should be invalid
 		"d",    // Missing number
 		"3.5d", // Float days should be invalid
+		// Note: "7days" and "1week" are now valid through natural language parsing
 	}
 
 	for _, input := range testCases {
@@ -314,6 +313,37 @@ func TestParseSinceTime_EdgeCases(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.input+"_"+tc.desc, func(t *testing.T) {
+			result, err := parseSinceTime(tc.input)
+			if tc.expected && err != nil {
+				t.Errorf("Expected %s to parse successfully (%s), got error: %v", tc.input, tc.desc, err)
+			}
+
+			if tc.expected && result.IsZero() {
+				t.Errorf("Expected %s to return valid time (%s), got zero time", tc.input, tc.desc)
+			}
+
+			if !tc.expected && err == nil {
+				t.Errorf("Expected %s to fail parsing (%s), but it succeeded", tc.input, tc.desc)
+			}
+		})
+	}
+}
+
+func TestParseSinceTime_NaturalLanguage(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected bool
+		desc     string
+	}{
+		{"last week", true, "natural language - last week"},
+		{"3 days ago", true, "natural language - 3 days ago"},
+		{"2 weeks ago", true, "natural language - 2 weeks ago"},
+		{"last month", true, "natural language - last month"},
+		{"1 hour ago", true, "natural language - 1 hour ago"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
 			result, err := parseSinceTime(tc.input)
 			if tc.expected && err != nil {
 				t.Errorf("Expected %s to parse successfully (%s), got error: %v", tc.input, tc.desc, err)

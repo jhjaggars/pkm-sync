@@ -23,12 +23,14 @@ var calendarCmd = &cobra.Command{
 	Long: `Fetches and displays calendar events from your Google Calendar within a specified date range.
 
 By default, shows events from the beginning of the current week to the end of today.
-Supports flexible date formats including ISO 8601 dates and relative dates like 'today', 'tomorrow', 'yesterday'.
+Supports flexible date formats including ISO 8601 dates, relative dates like 'today', 'tomorrow', 'yesterday',
+durations like '7d' or '24h', and natural language like 'last week' or '3 days ago'.
 
 Examples:
   pkm-sync calendar                           # Current week to today
-  pkm-sync calendar --start today            # Today only  
+  pkm-sync calendar --start today            # Today only
   pkm-sync calendar --start 2025-01-01 --end 2025-01-31
+  pkm-sync calendar --start "last week" --end today
   pkm-sync calendar --include-details        # Show meeting URLs, attendees, etc.
   pkm-sync calendar --export-docs            # Export attached Google Docs to markdown
   pkm-sync calendar --format json            # Output as JSON`,
@@ -37,8 +39,6 @@ Examples:
 
 // Calendar command flags.
 var (
-	startDate      string
-	endDate        string
 	maxResults     int64
 	outputFormat   string
 	includeDetails bool
@@ -74,45 +74,6 @@ func getEndOfToday() time.Time {
 	return getEndOfDay(time.Now())
 }
 
-// parseDate parses a date string with support for relative dates.
-func parseDate(dateStr string) (time.Time, error) {
-	if dateStr == "" {
-		return time.Time{}, nil
-	}
-
-	// Handle relative dates.
-	now := time.Now()
-
-	switch dateStr {
-	case "today":
-		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), nil
-	case "tomorrow":
-		tomorrow := now.AddDate(0, 0, 1)
-
-		return time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, tomorrow.Location()), nil
-	case "yesterday":
-		yesterday := now.AddDate(0, 0, -1)
-
-		return time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, yesterday.Location()), nil
-	}
-
-	// Try parsing ISO 8601 date formats.
-	formats := []string{
-		"2006-01-02T15:04:05",
-		"2006-01-02T15:04:05Z",
-		"2006-01-02T15:04:05-07:00",
-		"2006-01-02",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, dateStr); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse date: %s. Supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, 'today', 'tomorrow', 'yesterday'", dateStr)
-}
-
 // getDateRange returns the start and end dates for the calendar query.
 func getDateRange() (time.Time, time.Time, error) {
 	var (
@@ -123,7 +84,7 @@ func getDateRange() (time.Time, time.Time, error) {
 	// Parse start date or use default (beginning of week).
 
 	if startDate != "" {
-		start, err = parseDate(startDate)
+		start, err = parseDateTime(startDate)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid start date: %w", err)
 		}
@@ -133,7 +94,7 @@ func getDateRange() (time.Time, time.Time, error) {
 
 	// Parse end date or use default (end of today).
 	if endDate != "" {
-		end, err = parseDate(endDate)
+		end, err = parseDateTime(endDate)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid end date: %w", err)
 		}
@@ -390,9 +351,8 @@ func displayEventsAsJSON(events []*calendar.Event, calendarService *internalcale
 func init() {
 	rootCmd.AddCommand(calendarCmd)
 
-	// Date range flags.
-	calendarCmd.Flags().StringVarP(&startDate, "start", "s", "", "Start date (e.g., '2025-01-20', 'today')")
-	calendarCmd.Flags().StringVarP(&endDate, "end", "e", "", "End date (e.g., '2025-01-21', 'tomorrow')")
+	// Date range flags are inherited from rootCmd as persistent flags
+
 	calendarCmd.Flags().Int64VarP(&maxResults, "max-results", "n", 50, "Maximum number of events to return")
 
 	// Output and formatting flags.

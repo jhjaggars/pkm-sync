@@ -14,6 +14,8 @@ var (
 	credentialsPath string
 	configDir       string
 	debugMode       bool
+	startDate       string
+	endDate         string
 )
 
 var rootCmd = &cobra.Command{
@@ -57,6 +59,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&credentialsPath, "credentials", "c", "", "Path to credentials.json file")
 	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", "", "Custom configuration directory")
 	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "Enable debug logging")
+	rootCmd.PersistentFlags().StringVarP(&startDate, "start", "s", "", "Start date (ISO 8601, relative like '7d', named like 'today', or natural language like 'last week')")
+	rootCmd.PersistentFlags().StringVarP(&endDate, "end", "e", "", "End date (ISO 8601, relative like '7d', named like 'today', or natural language like 'last week')")
 }
 
 func Execute() {
