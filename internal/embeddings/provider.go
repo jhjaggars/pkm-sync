@@ -12,4 +12,7 @@ type Provider interface {
 
 	// Dimensions returns the dimensionality of the embeddings.
 	Dimensions() int
+
+	// Close closes any resources held by the provider.
+	Close() error
 }

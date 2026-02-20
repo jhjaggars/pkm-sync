@@ -63,6 +63,7 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create embedding provider: %w", err)
 	}
+	defer provider.Close()
 
 	// Open vector store
 	dbPath := cfg.VectorDB.DBPath

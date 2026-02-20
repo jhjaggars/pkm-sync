@@ -116,3 +116,12 @@ func (p *OpenAIProvider) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 func (p *OpenAIProvider) Dimensions() int {
 	return p.dimensions
 }
+
+// Close closes any idle HTTP connections.
+func (p *OpenAIProvider) Close() error {
+	if transport, ok := p.client.Transport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+	}
+
+	return nil
+}

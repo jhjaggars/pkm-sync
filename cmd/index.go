@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"pkm-sync/internal/vectorstore"
 	"pkm-sync/pkg/models"
 
+	mdconverter "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +28,8 @@ var (
 	indexDelay         int
 	indexMaxContentLen int
 )
+
+var multipleNewlines = regexp.MustCompile(`\n\s*\n\s*\n`)
 
 var indexCmd = &cobra.Command{
 	Use:   "index",
@@ -83,6 +87,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create embedding provider: %w", err)
 	}
+	defer provider.Close()
 
 	fmt.Printf("Using embedding provider: %s (%s, %d dimensions)\n", cfg.Embeddings.Provider, cfg.Embeddings.Model, cfg.Embeddings.Dimensions)
 
@@ -400,7 +405,7 @@ func buildThreadContent(group *ThreadGroup) string {
 		builder.WriteString("\n")
 
 		// Add message content
-		content := item.GetContent()
+		content := prepareContentForEmbedding(item.GetContent())
 		if content != "" {
 			builder.WriteString(content)
 		} else {
@@ -470,6 +475,55 @@ func buildThreadMetadata(group *ThreadGroup) map[string]interface{} {
 		},
 		"messages": messages,
 	}
+}
+
+// prepareContentForEmbedding converts HTML to markdown and cleans up content for better embeddings.
+func prepareContentForEmbedding(content string) string {
+	// Detect HTML
+	if !strings.Contains(content, "<") || !strings.Contains(content, ">") {
+		return content
+	}
+
+	// Convert HTML to markdown
+	markdown, err := mdconverter.ConvertString(content)
+	if err != nil {
+		// Fall back to raw content if conversion fails
+		return content
+	}
+
+	// Strip email quoted text
+	markdown = stripQuotedText(markdown)
+
+	// Normalize whitespace
+	markdown = collapseWhitespace(markdown)
+
+	return strings.TrimSpace(markdown)
+}
+
+// stripQuotedText removes quoted text from email content.
+func stripQuotedText(content string) string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, ">") {
+			break
+		}
+
+		if strings.HasPrefix(trimmed, "On ") && strings.Contains(trimmed, " wrote:") {
+			break
+		}
+
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
+}
+
+// collapseWhitespace reduces multiple consecutive newlines to just two.
+func collapseWhitespace(content string) string {
+	return multipleNewlines.ReplaceAllString(content, "\n\n")
 }
 
 // extractThreadID extracts the thread ID from an item's metadata.

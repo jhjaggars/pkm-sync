@@ -169,3 +169,12 @@ func (p *OllamaProvider) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 func (p *OllamaProvider) Dimensions() int {
 	return p.dimensions
 }
+
+// Close closes any idle HTTP connections.
+func (p *OllamaProvider) Close() error {
+	if transport, ok := p.client.Transport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+	}
+
+	return nil
+}
