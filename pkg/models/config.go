@@ -21,6 +21,12 @@ type Config struct {
 
 	// General application settings
 	App AppConfig `json:"app" yaml:"app"`
+
+	// Vector database settings
+	VectorDB VectorDBConfig `json:"vectordb" yaml:"vectordb"`
+
+	// Embeddings provider settings
+	Embeddings EmbeddingsConfig `json:"embeddings" yaml:"embeddings"`
 }
 
 // TransformConfig defines transformer pipeline configuration.
@@ -292,4 +298,19 @@ type JiraSourceConfig struct {
 	IncludeComments    bool `json:"include_comments"    yaml:"include_comments"`
 	IncludeHistory     bool `json:"include_history"     yaml:"include_history"`
 	IncludeAttachments bool `json:"include_attachments" yaml:"include_attachments"`
+}
+
+// VectorDBConfig defines vector database configuration.
+type VectorDBConfig struct {
+	DBPath    string `json:"db_path"    yaml:"db_path"`    // Path to SQLite database file
+	AutoIndex bool   `json:"auto_index" yaml:"auto_index"` // Auto-index on sync
+}
+
+// EmbeddingsConfig defines embeddings provider configuration.
+type EmbeddingsConfig struct {
+	Provider   string `json:"provider"   yaml:"provider"`   // "ollama" or "openai"
+	Model      string `json:"model"      yaml:"model"`      // Model name
+	APIURL     string `json:"api_url"    yaml:"api_url"`    // API base URL
+	APIKey     string `json:"api_key"    yaml:"api_key"`    // API key (for OpenAI)
+	Dimensions int    `json:"dimensions" yaml:"dimensions"` // Embedding dimensions
 }

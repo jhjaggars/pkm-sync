@@ -17,6 +17,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
+	github.com/asg017/sqlite-vec-go-bindings v0.1.6 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -26,6 +27,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.34 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/tj/go-naturaldate v1.3.0 // indirect

@@ -118,6 +118,17 @@ func GetDefaultConfig() *models.Config {
 			ErrorStrategy: "",
 			Transformers:  make(map[string]map[string]interface{}),
 		},
+		VectorDB: models.VectorDBConfig{
+			DBPath:    "", // Will be resolved to ~/.config/pkm-sync/vectors.db at runtime
+			AutoIndex: false,
+		},
+		Embeddings: models.EmbeddingsConfig{
+			Provider:   "ollama",
+			Model:      "nomic-embed-text",
+			APIURL:     "http://localhost:11434",
+			APIKey:     "",
+			Dimensions: 768,
+		},
 	}
 }
 
