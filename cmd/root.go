@@ -25,6 +25,7 @@ var rootCmd = &cobra.Command{
 with Personal Knowledge Management systems (Obsidian, Logseq, etc.).
 
 Commands:
+  sync      Sync all enabled sources to PKM systems
   gmail     Sync Gmail emails to PKM systems
   drive     Export Google Drive documents to markdown
   calendar  List and sync Google Calendar events
