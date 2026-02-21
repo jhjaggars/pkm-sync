@@ -17,6 +17,15 @@ import (
 	"google.golang.org/api/option"
 )
 
+const (
+	// defaultConcurrentWorkers is the default number of concurrent API workers.
+	defaultConcurrentWorkers = 5
+	// throttledConcurrentWorkers is used when request delay is high to avoid rate limiting.
+	throttledConcurrentWorkers = 2
+	// highDelayThreshold is the delay above which worker concurrency is reduced.
+	highDelayThreshold = 100 * time.Millisecond
+)
+
 // Service wraps the Gmail API with configuration and convenience methods.
 type Service struct {
 	client   *http.Client
@@ -506,19 +515,142 @@ func (s *Service) GetMessagesStream(since time.Time, batchSize int, callback fun
 	return nil
 }
 
-// fetchMessagesConcurrently fetches messages concurrently with rate limiting.
-func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
-	// Configure concurrency based on configuration and rate limiting needs.
-	maxWorkers := 5 // Conservative default to respect Gmail API limits.
-	if s.config.RequestDelay > 100*time.Millisecond {
+// GetThreads retrieves threads based on the configured filters and time range.
+func (s *Service) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error) {
+	query := s.buildQuery(since)
+
+	slog.Info("Gmail thread query built",
+		"source_id", s.sourceID,
+		"query", query,
+		"since", since.Format("2006-01-02"),
+		"limit", limit)
+
+	if limit <= 0 {
+		limit = 100
+	}
+
+	if s.config.MaxRequests > 0 && limit > s.config.MaxRequests {
+		limit = s.config.MaxRequests
+	}
+
+	req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(limit))
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to list threads: %w", err)
+	}
+
+	listResp, ok := resp.(*gmail.ListThreadsResponse)
+	if !ok || listResp == nil {
+		return nil, fmt.Errorf("unexpected response type from Gmail Threads API")
+	}
+
+	slog.Info("Gmail Threads API response",
+		"source_id", s.sourceID,
+		"threads_found", len(listResp.Threads),
+		"query", query)
+
+	if len(listResp.Threads) == 0 {
+		return []*gmail.Thread{}, nil
+	}
+
+	// Fetch full thread details concurrently.
+	threads, skippedCount := s.fetchThreadsConcurrently(listResp.Threads)
+
+	if skippedCount > 0 {
+		slog.Info("Thread retrieval completed", "retrieved", len(threads), "skipped", skippedCount)
+	}
+
+	return threads, nil
+}
+
+// GetThread retrieves a single thread with full message details.
+func (s *Service) GetThread(threadID string) (*gmail.Thread, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("thread ID is required")
+	}
+
+	if s.service == nil {
+		return nil, fmt.Errorf("gmail service is not initialized")
+	}
+
+	req := s.service.Users.Threads.Get("me", threadID).Format("full")
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, handleThreadError(threadID, err)
+	}
+
+	return resp.(*gmail.Thread), nil
+}
+
+// fetchThreadsConcurrently fetches full thread details concurrently with rate limiting.
+// Uses context.Background(); callers can provide a real context once Source.Fetch adds one.
+func (s *Service) fetchThreadsConcurrently(threadList []*gmail.Thread) ([]*gmail.Thread, int) {
+	return fetchConcurrently(
+		context.Background(),
+		s.config.RequestDelay,
+		threadList,
+		func(t *gmail.Thread) string { return t.Id },
+		s.GetThread,
+		"thread",
+	)
+}
+
+// isThreadError checks if an error is related to thread fetching.
+func isThreadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+
+	return strings.Contains(errStr, "thread") || strings.Contains(errStr, "threads")
+}
+
+// handleThreadError provides better error context for thread-related errors.
+func handleThreadError(threadID string, err error) error {
+	if googleErr, ok := err.(*googleapi.Error); ok {
+		switch googleErr.Code {
+		case http.StatusNotFound:
+			return fmt.Errorf("thread %s not found: %w", threadID, err)
+		case http.StatusForbidden:
+			return fmt.Errorf("access denied to thread %s: %w", threadID, err)
+		default:
+			return fmt.Errorf("API error for thread %s (code %d): %w", threadID, googleErr.Code, err)
+		}
+	}
+
+	return fmt.Errorf("failed to get thread %s: %w", threadID, err)
+}
+
+// fetchConcurrently is a generic worker pool that fetches full items from the Gmail API.
+// Items is the list of stubs, getID extracts an item's ID, fetch retrieves the full
+// item by ID, and itemType is used in log messages (e.g. "message" or "thread").
+// ctx is checked between items so callers can cancel in-flight work.
+func fetchConcurrently[T any](
+	ctx context.Context,
+	delay time.Duration,
+	items []T,
+	getID func(T) string,
+	fetch func(string) (T, error),
+	itemType string,
+) ([]T, int) {
+	// Configure concurrency based on rate limiting needs.
+	maxWorkers := defaultConcurrentWorkers
+	if delay > highDelayThreshold {
 		// If delay is high, reduce concurrency.
-		maxWorkers = 2
+		maxWorkers = throttledConcurrentWorkers
 	}
 
 	// Create channels for work distribution.
-	messageChan := make(chan *gmail.Message, len(messageList))
-	resultChan := make(chan *gmail.Message, len(messageList))
-	errorChan := make(chan error, len(messageList))
+	itemChan := make(chan T, len(items))
+	resultChan := make(chan T, len(items))
+	errorChan := make(chan error, len(items))
 
 	// Use atomic counter to avoid data race.
 	var skippedCount int32
@@ -531,32 +663,50 @@ func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gm
 		go func(workerID int) {
 			defer wg.Done()
 
-			for msg := range messageChan {
-				// Apply rate limiting per worker.
-				if s.config.RequestDelay > 0 {
-					time.Sleep(s.config.RequestDelay)
-				}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-itemChan:
+					if !ok {
+						return
+					}
 
-				fullMessage, err := s.GetMessageWithRetry(msg.Id)
-				if err != nil {
-					slog.Warn("Worker failed to get message", "worker_id", workerID, "message_id", msg.Id, "error", err)
-					atomic.AddInt32(&skippedCount, 1)
+					// Apply rate limiting per worker.
+					if delay > 0 {
+						time.Sleep(delay)
+					}
 
-					errorChan <- err
-				} else {
-					resultChan <- fullMessage
+					id := getID(item)
+
+					full, err := fetch(id)
+					if err != nil {
+						slog.Warn("Worker failed to get "+itemType,
+							"worker_id", workerID,
+							itemType+"_id", id,
+							"error", err)
+						atomic.AddInt32(&skippedCount, 1)
+
+						errorChan <- err
+					} else {
+						resultChan <- full
+					}
 				}
 			}
 		}(i)
 	}
 
-	// Send work to workers.
+	// Send work to workers; close channel on exit so workers drain cleanly.
 	go func() {
-		for _, msg := range messageList {
-			messageChan <- msg
-		}
+		defer close(itemChan)
 
-		close(messageChan)
+		for _, item := range items {
+			select {
+			case <-ctx.Done():
+				return
+			case itemChan <- item:
+			}
+		}
 	}()
 
 	// Wait for workers to complete.
@@ -567,16 +717,16 @@ func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gm
 	}()
 
 	// Collect results.
-	var messages []*gmail.Message
+	var results []T
 
 	// Collect all results.
 	for {
 		select {
-		case msg, ok := <-resultChan:
+		case result, ok := <-resultChan:
 			if !ok {
 				resultChan = nil
 			} else {
-				messages = append(messages, msg)
+				results = append(results, result)
 			}
 		case _, ok := <-errorChan:
 			if !ok {
@@ -590,5 +740,18 @@ func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gm
 		}
 	}
 
-	return messages, int(atomic.LoadInt32(&skippedCount))
+	return results, int(atomic.LoadInt32(&skippedCount))
+}
+
+// fetchMessagesConcurrently fetches messages concurrently with rate limiting.
+// Uses context.Background(); callers can provide a real context once Source.Fetch adds one.
+func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
+	return fetchConcurrently(
+		context.Background(),
+		s.config.RequestDelay,
+		messageList,
+		func(msg *gmail.Message) string { return msg.Id },
+		s.GetMessageWithRetry,
+		"message",
+	)
 }

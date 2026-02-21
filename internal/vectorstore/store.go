@@ -252,6 +252,7 @@ func (s *Store) Search(queryEmbedding []float32, limit int, filters SearchFilter
 	defer rows.Close()
 
 	var results []SearchResult
+
 	for rows.Next() {
 		var (
 			result                          SearchResult
@@ -315,6 +316,7 @@ func (s *Store) GetIndexedThreadIDs(sourceName string) (map[string]bool, error) 
 	defer rows.Close()
 
 	indexed := make(map[string]bool)
+
 	for rows.Next() {
 		var threadID string
 		if err := rows.Scan(&threadID); err != nil {
