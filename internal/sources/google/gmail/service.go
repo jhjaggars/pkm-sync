@@ -589,8 +589,10 @@ func (s *Service) GetThread(threadID string) (*gmail.Thread, error) {
 }
 
 // fetchThreadsConcurrently fetches full thread details concurrently with rate limiting.
+// Uses context.Background(); callers can provide a real context once Source.Fetch adds one.
 func (s *Service) fetchThreadsConcurrently(threadList []*gmail.Thread) ([]*gmail.Thread, int) {
 	return fetchConcurrently(
+		context.Background(),
 		s.config.RequestDelay,
 		threadList,
 		func(t *gmail.Thread) string { return t.Id },
@@ -629,7 +631,9 @@ func handleThreadError(threadID string, err error) error {
 // fetchConcurrently is a generic worker pool that fetches full items from the Gmail API.
 // Items is the list of stubs, getID extracts an item's ID, fetch retrieves the full
 // item by ID, and itemType is used in log messages (e.g. "message" or "thread").
+// ctx is checked between items so callers can cancel in-flight work.
 func fetchConcurrently[T any](
+	ctx context.Context,
 	delay time.Duration,
 	items []T,
 	getID func(T) string,
@@ -659,37 +663,50 @@ func fetchConcurrently[T any](
 		go func(workerID int) {
 			defer wg.Done()
 
-			for item := range itemChan {
-				// Apply rate limiting per worker.
-				if delay > 0 {
-					time.Sleep(delay)
-				}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-itemChan:
+					if !ok {
+						return
+					}
 
-				id := getID(item)
+					// Apply rate limiting per worker.
+					if delay > 0 {
+						time.Sleep(delay)
+					}
 
-				full, err := fetch(id)
-				if err != nil {
-					slog.Warn("Worker failed to get "+itemType,
-						"worker_id", workerID,
-						itemType+"_id", id,
-						"error", err)
-					atomic.AddInt32(&skippedCount, 1)
+					id := getID(item)
 
-					errorChan <- err
-				} else {
-					resultChan <- full
+					full, err := fetch(id)
+					if err != nil {
+						slog.Warn("Worker failed to get "+itemType,
+							"worker_id", workerID,
+							itemType+"_id", id,
+							"error", err)
+						atomic.AddInt32(&skippedCount, 1)
+
+						errorChan <- err
+					} else {
+						resultChan <- full
+					}
 				}
 			}
 		}(i)
 	}
 
-	// Send work to workers.
+	// Send work to workers; close channel on exit so workers drain cleanly.
 	go func() {
-		for _, item := range items {
-			itemChan <- item
-		}
+		defer close(itemChan)
 
-		close(itemChan)
+		for _, item := range items {
+			select {
+			case <-ctx.Done():
+				return
+			case itemChan <- item:
+			}
+		}
 	}()
 
 	// Wait for workers to complete.
@@ -727,8 +744,10 @@ func fetchConcurrently[T any](
 }
 
 // fetchMessagesConcurrently fetches messages concurrently with rate limiting.
+// Uses context.Background(); callers can provide a real context once Source.Fetch adds one.
 func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
 	return fetchConcurrently(
+		context.Background(),
 		s.config.RequestDelay,
 		messageList,
 		func(msg *gmail.Message) string { return msg.Id },

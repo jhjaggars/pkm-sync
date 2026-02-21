@@ -13,8 +13,12 @@ import (
 	"google.golang.org/api/gmail/v1"
 )
 
-// threadIDPrefix is the prefix used when constructing item IDs from Gmail thread IDs.
-const threadIDPrefix = "thread_"
+const (
+	// threadIDPrefix is the prefix used when constructing item IDs from Gmail thread IDs.
+	threadIDPrefix = "thread_"
+	// largeThreadThreshold is the message count above which a memory warning is logged.
+	largeThreadThreshold = 50
+)
 
 // EmailRecipient represents an email recipient with name and email.
 type EmailRecipient struct {
@@ -425,6 +429,10 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 		return nil, fmt.Errorf("thread is nil")
 	}
 
+	if thread.Id == "" {
+		return nil, fmt.Errorf("thread has empty ID")
+	}
+
 	if len(thread.Messages) == 0 {
 		return nil, fmt.Errorf("thread %s has no messages", thread.Id)
 	}
@@ -435,6 +443,12 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 	sort.Slice(messages, func(i, j int) bool {
 		return messages[i].InternalDate < messages[j].InternalDate
 	})
+
+	if len(messages) > largeThreadThreshold {
+		slog.Warn("Aggregating large thread; content aggregation may use significant memory",
+			"thread_id", thread.Id,
+			"message_count", len(messages))
+	}
 
 	firstMsg := messages[0]
 	subject := getSubject(firstMsg)
