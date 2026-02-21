@@ -2,7 +2,9 @@ package gmail
 
 import (
 	"fmt"
+	"log/slog"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 
@@ -411,6 +413,118 @@ func hasAttachments(msg *gmail.Message) bool {
 	}
 
 	return hasAttachmentsInPart(msg.Payload)
+}
+
+// FromGmailThread converts a Gmail thread to the universal Item format.
+// It aggregates all messages in the thread chronologically into a single item.
+func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, service *Service) (*models.Item, error) {
+	if thread == nil {
+		return nil, fmt.Errorf("thread is nil")
+	}
+
+	if len(thread.Messages) == 0 {
+		return nil, fmt.Errorf("thread %s has no messages", thread.Id)
+	}
+
+	// Sort messages chronologically by internal date.
+	messages := make([]*gmail.Message, len(thread.Messages))
+	copy(messages, thread.Messages)
+	sort.Slice(messages, func(i, j int) bool {
+		return messages[i].InternalDate < messages[j].InternalDate
+	})
+
+	firstMsg := messages[0]
+	subject := getSubject(firstMsg)
+
+	createdAt, err := getDate(firstMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse thread start date: %w", err)
+	}
+
+	lastMsg := messages[len(messages)-1]
+
+	updatedAt, err := getDate(lastMsg)
+	if err != nil {
+		updatedAt = createdAt
+	}
+
+	// Build aggregated content from all messages.
+	var contentBuilder strings.Builder
+
+	for i, msg := range messages {
+		processor := NewContentProcessor(config)
+
+		msgContent, err := processor.ProcessEmailBody(msg)
+		if err != nil {
+			slog.Warn("Failed to process message body in thread", "thread_id", thread.Id, "message_id", msg.Id, "error", err)
+			msgContent = msg.Snippet
+		}
+
+		if i > 0 {
+			contentBuilder.WriteString("\n\n---\n\n")
+		}
+
+		msgDate, _ := getDate(msg)
+		contentBuilder.WriteString(fmt.Sprintf("**From:** %s  \n", getHeader(msg, "from")))
+		contentBuilder.WriteString(fmt.Sprintf("**Date:** %s  \n\n", msgDate.Format("2006-01-02 15:04:05")))
+		contentBuilder.WriteString(msgContent)
+	}
+
+	// Collect all labels across messages (deduplicated).
+	labelSet := make(map[string]bool)
+	for _, msg := range messages {
+		for _, label := range msg.LabelIds {
+			labelSet[label] = true
+		}
+	}
+
+	labels := make([]string, 0, len(labelSet))
+	for label := range labelSet {
+		labels = append(labels, label)
+	}
+
+	item := &models.Item{
+		ID:         fmt.Sprintf("thread_%s", thread.Id),
+		Title:      subject,
+		Content:    contentBuilder.String(),
+		SourceType: "gmail",
+		ItemType:   "email_thread",
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		Metadata:   make(map[string]interface{}),
+		Tags:       buildThreadItemTags(firstMsg, config, len(messages)),
+	}
+
+	item.Metadata["thread_id"] = thread.Id
+	item.Metadata["message_count"] = len(messages)
+	item.Metadata["labels"] = labels
+	item.Metadata["snippet"] = thread.Snippet
+
+	// Process attachments if enabled.
+	if config.DownloadAttachments {
+		var processor *ContentProcessor
+		if service != nil {
+			processor = NewContentProcessorWithService(config, service)
+		} else {
+			processor = NewContentProcessor(config)
+		}
+
+		item.Attachments = processor.ProcessThreadAttachments(thread)
+	}
+
+	return item, nil
+}
+
+// buildThreadItemTags builds tags for a thread item, reusing per-message tag logic.
+func buildThreadItemTags(firstMsg *gmail.Message, config models.GmailSourceConfig, messageCount int) []string {
+	tags := buildTags(firstMsg, config)
+	tags = append(tags, "thread")
+
+	if messageCount > 5 {
+		tags = append(tags, "long-thread")
+	}
+
+	return tags
 }
 
 // hasAttachmentsInPart recursively checks for attachments in message parts.

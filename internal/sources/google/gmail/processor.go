@@ -117,6 +117,39 @@ func (p *ContentProcessor) ProcessEmailAttachments(msg *gmail.Message) []models.
 	return filtered
 }
 
+// ProcessThreadAttachments aggregates attachments across all messages in a thread.
+func (p *ContentProcessor) ProcessThreadAttachments(thread *gmail.Thread) []models.Attachment {
+	if thread == nil || !p.config.DownloadAttachments {
+		return []models.Attachment{}
+	}
+
+	var allAttachments []models.Attachment
+
+	for _, msg := range thread.Messages {
+		if msg.Payload == nil {
+			continue
+		}
+
+		var msgAttachments []models.Attachment
+
+		p.extractAttachmentsFromPart(msg.Payload, msg.Id, &msgAttachments)
+
+		filtered := p.filterAttachments(msgAttachments)
+
+		if p.service != nil {
+			for i := range filtered {
+				if err := p.fetchAttachmentData(msg.Id, &filtered[i]); err != nil {
+					slog.Warn("Failed to fetch thread attachment data", "message_id", msg.Id, "attachment_name", filtered[i].Name, "error", err)
+				}
+			}
+		}
+
+		allAttachments = append(allAttachments, filtered...)
+	}
+
+	return allAttachments
+}
+
 // extractAttachmentsFromPart recursively extracts attachments from message parts.
 func (p *ContentProcessor) extractAttachmentsFromPart(
 	part *gmail.MessagePart,

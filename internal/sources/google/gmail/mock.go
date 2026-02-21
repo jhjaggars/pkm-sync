@@ -68,6 +68,63 @@ func (m *MockService) GetMessage(messageID string) (*gmail.Message, error) {
 	return nil, fmt.Errorf("message not found: %s", messageID)
 }
 
+// GetThreads returns mock threads built from the mock messages.
+func (m *MockService) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Group messages by thread ID to build mock threads.
+	threadMap := make(map[string][]*gmail.Message)
+
+	for _, msg := range m.messages {
+		if m.messageMatchesFilters(msg) {
+			threadMap[msg.ThreadId] = append(threadMap[msg.ThreadId], msg)
+		}
+	}
+
+	threads := make([]*gmail.Thread, 0, len(threadMap))
+
+	for threadID, msgs := range threadMap {
+		threads = append(threads, &gmail.Thread{
+			Id:       threadID,
+			Messages: msgs,
+			Snippet:  msgs[0].Snippet,
+		})
+
+		if len(threads) >= limit {
+			break
+		}
+	}
+
+	return threads, nil
+}
+
+// GetThread returns a specific mock thread by ID.
+func (m *MockService) GetThread(threadID string) (*gmail.Thread, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("thread ID is required")
+	}
+
+	var threadMessages []*gmail.Message
+
+	for _, msg := range m.messages {
+		if msg.ThreadId == threadID {
+			threadMessages = append(threadMessages, msg)
+		}
+	}
+
+	if len(threadMessages) == 0 {
+		return nil, fmt.Errorf("thread not found: %s", threadID)
+	}
+
+	return &gmail.Thread{
+		Id:       threadID,
+		Messages: threadMessages,
+		Snippet:  threadMessages[0].Snippet,
+	}, nil
+}
+
 // GetMessagesInRange returns mock messages within a time range.
 func (m *MockService) GetMessagesInRange(start, end time.Time, limit int) ([]*gmail.Message, error) {
 	if end.Before(start) {

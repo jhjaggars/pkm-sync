@@ -506,6 +506,175 @@ func (s *Service) GetMessagesStream(since time.Time, batchSize int, callback fun
 	return nil
 }
 
+// GetThreads retrieves threads based on the configured filters and time range.
+func (s *Service) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error) {
+	query := s.buildQuery(since)
+
+	slog.Info("Gmail thread query built",
+		"source_id", s.sourceID,
+		"query", query,
+		"since", since.Format("2006-01-02"),
+		"limit", limit)
+
+	if limit <= 0 {
+		limit = 100
+	}
+
+	if s.config.MaxRequests > 0 && limit > s.config.MaxRequests {
+		limit = s.config.MaxRequests
+	}
+
+	req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(limit))
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to list threads: %w", err)
+	}
+
+	listResp := resp.(*gmail.ListThreadsResponse)
+	slog.Info("Gmail Threads API response", "source_id", s.sourceID, "threads_found", len(listResp.Threads), "query", query)
+
+	if len(listResp.Threads) == 0 {
+		return []*gmail.Thread{}, nil
+	}
+
+	// Fetch full thread details concurrently.
+	threads, skippedCount := s.fetchThreadsConcurrently(listResp.Threads)
+
+	if skippedCount > 0 {
+		slog.Info("Thread retrieval completed", "retrieved", len(threads), "skipped", skippedCount)
+	}
+
+	return threads, nil
+}
+
+// GetThread retrieves a single thread with full message details.
+func (s *Service) GetThread(threadID string) (*gmail.Thread, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("thread ID is required")
+	}
+
+	if s.service == nil {
+		return nil, fmt.Errorf("gmail service is not initialized")
+	}
+
+	req := s.service.Users.Threads.Get("me", threadID).Format("full")
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, handleThreadError(threadID, err)
+	}
+
+	return resp.(*gmail.Thread), nil
+}
+
+// fetchThreadsConcurrently fetches full thread details concurrently with rate limiting.
+func (s *Service) fetchThreadsConcurrently(threadList []*gmail.Thread) ([]*gmail.Thread, int) {
+	maxWorkers := 5
+	if s.config.RequestDelay > 100*time.Millisecond {
+		maxWorkers = 2
+	}
+
+	threadChan := make(chan *gmail.Thread, len(threadList))
+	resultChan := make(chan *gmail.Thread, len(threadList))
+	errorChan := make(chan error, len(threadList))
+
+	var skippedCount int32
+
+	var wg sync.WaitGroup
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+
+		go func(workerID int) {
+			defer wg.Done()
+
+			for thread := range threadChan {
+				if s.config.RequestDelay > 0 {
+					time.Sleep(s.config.RequestDelay)
+				}
+
+				fullThread, err := s.GetThread(thread.Id)
+				if err != nil {
+					slog.Warn("Worker failed to get thread", "worker_id", workerID, "thread_id", thread.Id, "error", err)
+					atomic.AddInt32(&skippedCount, 1)
+
+					errorChan <- err
+				} else {
+					resultChan <- fullThread
+				}
+			}
+		}(i)
+	}
+
+	go func() {
+		for _, thread := range threadList {
+			threadChan <- thread
+		}
+
+		close(threadChan)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		close(errorChan)
+	}()
+
+	var threads []*gmail.Thread
+
+	for {
+		select {
+		case thread, ok := <-resultChan:
+			if !ok {
+				resultChan = nil
+			} else {
+				threads = append(threads, thread)
+			}
+		case _, ok := <-errorChan:
+			if !ok {
+				errorChan = nil
+			}
+		}
+
+		if resultChan == nil && errorChan == nil {
+			break
+		}
+	}
+
+	return threads, int(atomic.LoadInt32(&skippedCount))
+}
+
+// isThreadError checks if an error is related to thread fetching.
+func isThreadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+
+	return strings.Contains(errStr, "thread") || strings.Contains(errStr, "threads")
+}
+
+// handleThreadError provides better error context for thread-related errors.
+func handleThreadError(threadID string, err error) error {
+	if googleErr, ok := err.(*googleapi.Error); ok {
+		switch googleErr.Code {
+		case http.StatusNotFound:
+			return fmt.Errorf("thread %s not found: %w", threadID, err)
+		case http.StatusForbidden:
+			return fmt.Errorf("access denied to thread %s: %w", threadID, err)
+		default:
+			return fmt.Errorf("API error for thread %s (code %d): %w", threadID, googleErr.Code, err)
+		}
+	}
+
+	return fmt.Errorf("failed to get thread %s: %w", threadID, err)
+}
+
 // fetchMessagesConcurrently fetches messages concurrently with rate limiting.
 func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
 	// Configure concurrency based on configuration and rate limiting needs.
