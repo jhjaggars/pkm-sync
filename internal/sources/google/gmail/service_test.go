@@ -85,7 +85,7 @@ func TestService_buildQuery(t *testing.T) {
 				Labels: []string{"IMPORTANT", "STARRED"},
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 label:IMPORTANT label:STARRED",
+			expected: "after:2024/01/01 (label:IMPORTANT OR label:STARRED)",
 		},
 		{
 			name: "with custom query",
@@ -149,7 +149,7 @@ func TestService_buildQuery(t *testing.T) {
 				RequireAttachments: true,
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 label:IMPORTANT (has:attachment) (from:company.com) -from:noreply.com is:unread has:attachment",
+			expected: "after:2024/01/01 (label:IMPORTANT) (has:attachment) (from:company.com) -from:noreply.com is:unread has:attachment",
 		},
 	}
 

@@ -51,10 +51,18 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 		}
 	}
 
-	// Label filtering.
-	for _, label := range config.Labels {
-		if label != "" { // Filter out empty labels.
-			parts = append(parts, fmt.Sprintf("label:%s", label))
+	// Label filtering - use OR logic (match ANY label).
+	if len(config.Labels) > 0 {
+		var labelParts []string
+
+		for _, label := range config.Labels {
+			if label != "" {
+				labelParts = append(labelParts, fmt.Sprintf("label:%s", label))
+			}
+		}
+
+		if len(labelParts) > 0 {
+			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(labelParts, " OR ")))
 		}
 	}
 
@@ -136,10 +144,18 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 	parts = append(parts, fmt.Sprintf("after:%s", start.Format("2006/01/02")))
 	parts = append(parts, fmt.Sprintf("before:%s", end.Format("2006/01/02")))
 
-	// Label filtering.
-	for _, label := range config.Labels {
-		if label != "" { // Filter out empty labels.
-			parts = append(parts, fmt.Sprintf("label:%s", label))
+	// Label filtering - use OR logic (match ANY label).
+	if len(config.Labels) > 0 {
+		var labelParts []string
+
+		for _, label := range config.Labels {
+			if label != "" {
+				labelParts = append(labelParts, fmt.Sprintf("label:%s", label))
+			}
+		}
+
+		if len(labelParts) > 0 {
+			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(labelParts, " OR ")))
 		}
 	}
 

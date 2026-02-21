@@ -342,10 +342,6 @@ func createTargetWithConfig(name string, cfg *models.Config) (interfaces.Target,
 }
 
 func parseSinceTime(since string) (time.Time, error) {
-	if since == "" {
-		return time.Time{}, fmt.Errorf("empty since string")
-	}
-
 	// Delegate to the unified date parser
 	return parseDateTime(since)
 }

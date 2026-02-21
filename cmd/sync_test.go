@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"pkm-sync/pkg/models"
 )
@@ -243,6 +244,47 @@ func TestParseSinceTime_SpecialValues(t *testing.T) {
 				t.Errorf("Expected %s to return valid time, got zero time", tc.input)
 			}
 		})
+	}
+}
+
+func TestParseSinceTime_TodayReturnsCorrectDate(t *testing.T) {
+	now := time.Now()
+
+	result, err := parseSinceTime("today")
+	if err != nil {
+		t.Fatalf("parseSinceTime(\"today\") failed: %v", err)
+	}
+
+	// Verify it returns today's date at midnight
+	expected := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if !result.Equal(expected) {
+		t.Errorf("parseSinceTime(\"today\") = %v, want %v", result, expected)
+	}
+
+	// Verify the date is actually today, not yesterday
+	if result.Year() != now.Year() || result.Month() != now.Month() || result.Day() != now.Day() {
+		t.Errorf("parseSinceTime(\"today\") returned wrong date: got %v, want today's date %v", result.Format("2006-01-02"), now.Format("2006-01-02"))
+	}
+}
+
+func TestParseSinceTime_YesterdayReturnsCorrectDate(t *testing.T) {
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1)
+
+	result, err := parseSinceTime("yesterday")
+	if err != nil {
+		t.Fatalf("parseSinceTime(\"yesterday\") failed: %v", err)
+	}
+
+	// Verify it returns yesterday's date at midnight
+	expected := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, yesterday.Location())
+	if !result.Equal(expected) {
+		t.Errorf("parseSinceTime(\"yesterday\") = %v, want %v", result, expected)
+	}
+
+	// Verify the date is actually yesterday
+	if result.Year() != yesterday.Year() || result.Month() != yesterday.Month() || result.Day() != yesterday.Day() {
+		t.Errorf("parseSinceTime(\"yesterday\") returned wrong date: got %v, want yesterday's date %v", result.Format("2006-01-02"), yesterday.Format("2006-01-02"))
 	}
 }
 
