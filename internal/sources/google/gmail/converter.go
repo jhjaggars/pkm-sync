@@ -475,6 +475,7 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 
 	// Collect all labels across messages (deduplicated).
 	labelSet := make(map[string]bool)
+
 	for _, msg := range messages {
 		for _, label := range msg.LabelIds {
 			labelSet[label] = true

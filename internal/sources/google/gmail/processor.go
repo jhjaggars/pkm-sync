@@ -139,7 +139,10 @@ func (p *ContentProcessor) ProcessThreadAttachments(thread *gmail.Thread) []mode
 		if p.service != nil {
 			for i := range filtered {
 				if err := p.fetchAttachmentData(msg.Id, &filtered[i]); err != nil {
-					slog.Warn("Failed to fetch thread attachment data", "message_id", msg.Id, "attachment_name", filtered[i].Name, "error", err)
+					slog.Warn("Failed to fetch thread attachment data",
+						"message_id", msg.Id,
+						"attachment_name", filtered[i].Name,
+						"error", err)
 				}
 			}
 		}
