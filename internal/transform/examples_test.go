@@ -261,9 +261,10 @@ func TestFilterTransformerInvalidConfig(t *testing.T) {
 }
 
 func TestGetAllExampleTransformers(t *testing.T) {
+	// GetAllExampleTransformers now returns all 6 transformers (same as GetAllContentProcessingTransformers).
 	transformers := GetAllExampleTransformers()
-	if len(transformers) != 2 {
-		t.Errorf("Expected 2 example transformers, got %d", len(transformers))
+	if len(transformers) != 6 {
+		t.Errorf("Expected 6 transformers, got %d", len(transformers))
 	}
 }
 

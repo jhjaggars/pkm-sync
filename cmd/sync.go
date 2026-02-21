@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"pkm-sync/internal/config"
+	"pkm-sync/internal/sinks"
+	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/transform"
-	"pkm-sync/pkg/models"
+	"pkm-sync/pkg/interfaces"
 
 	"github.com/spf13/cobra"
 )
@@ -46,15 +49,7 @@ func init() {
 	syncCmd.Flags().StringVar(&syncOutputFormat, "format", "summary", "Output format for dry-run (summary, json)")
 }
 
-// sourceResult tracks the outcome of syncing a single source.
-type sourceResult struct {
-	Name      string
-	ItemCount int
-	Err       error
-}
-
 func runSyncCommand(cmd *cobra.Command, args []string) error {
-	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		cfg = config.GetDefaultConfig()
@@ -72,7 +67,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no enabled sources found. Configure sources in your config file or use --source flag")
 	}
 
-	// Resolve target, output, and since from CLI flags with config fallbacks
+	// Resolve target, output, since from CLI flags with config fallbacks
 	finalTargetName := cfg.Sync.DefaultTarget
 	if syncTargetName != "" {
 		finalTargetName = syncTargetName
@@ -88,7 +83,6 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		finalSince = syncSince
 	}
 
-	// Parse the default since time (used as fallback for per-source since)
 	defaultSinceTime, err := parseSinceTime(finalSince)
 	if err != nil {
 		return fmt.Errorf("invalid since parameter: %w", err)
@@ -97,22 +91,13 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Syncing sources [%s] to %s (output: %s, since: %s)\n",
 		strings.Join(sourcesToSync, ", "), finalTargetName, finalOutputDir, finalSince)
 
-	// Create target — fatal on failure since we need somewhere to write
-	target, err := createTargetWithConfig(finalTargetName, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create target: %w", err)
-	}
-
-	// Collect all items across all sources
-	var allItems []models.ItemInterface
-
-	var results []sourceResult
+	// Build source entries (pre-create sources with per-source options)
+	var entries []syncer.SourceEntry
 
 	for _, srcName := range sourcesToSync {
 		sourceConfig, exists := cfg.Sources[srcName]
 		if !exists {
 			fmt.Printf("Warning: source '%s' not configured, skipping\n", srcName)
-			results = append(results, sourceResult{Name: srcName, Err: fmt.Errorf("not configured")})
 
 			continue
 		}
@@ -123,123 +108,106 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Only support source types that implement the Source interface
 		if sourceConfig.Type != "gmail" && sourceConfig.Type != "google_calendar" {
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
-			results = append(results, sourceResult{Name: srcName, Err: fmt.Errorf("unsupported type '%s'", sourceConfig.Type)})
 
 			continue
 		}
 
-		source, err := createSourceWithConfig(srcName, sourceConfig, nil)
+		src, err := createSourceWithConfig(srcName, sourceConfig, nil)
 		if err != nil {
 			fmt.Printf("Warning: failed to create source '%s': %v, skipping\n", srcName, err)
-			results = append(results, sourceResult{Name: srcName, Err: err})
 
 			continue
 		}
 
-		// Per-source since: config overrides default, but CLI flag takes precedence over both
-		sourceSince := finalSince
+		entry := syncer.SourceEntry{Name: srcName, Src: src}
+
+		// Per-source since: config overrides default, but CLI flag takes precedence
 		if sourceConfig.Since != "" && syncSince == "" {
-			sourceSince = sourceConfig.Since
+			t, err := parseSinceTime(sourceConfig.Since)
+			if err != nil {
+				fmt.Printf("Warning: invalid since time for source '%s': %v, using default\n", srcName, err)
+			} else {
+				entry.Since = t
+			}
 		}
 
-		sourceSinceTime, err := parseSinceTime(sourceSince)
-		if err != nil {
-			fmt.Printf("Warning: invalid since time for source '%s': %v, using default\n", srcName, err)
-
-			sourceSinceTime = defaultSinceTime
-		}
-
-		// Per-source max results with a cap at 2500
-		maxResults := syncLimit
-
+		// Per-source limit (cap at 2500)
 		if sourceConfig.Google.MaxResults > 0 {
 			if sourceConfig.Google.MaxResults > 2500 {
 				fmt.Printf("Warning: max_results for source '%s' is %d (maximum: 2500), capping\n", srcName, sourceConfig.Google.MaxResults)
 
-				maxResults = 2500
+				entry.Limit = 2500
 			} else {
-				maxResults = sourceConfig.Google.MaxResults
+				entry.Limit = sourceConfig.Google.MaxResults
 			}
 		}
 
-		fmt.Printf("Fetching items from %s...\n", srcName)
-
-		items, err := source.Fetch(sourceSinceTime, maxResults)
-		if err != nil {
-			fmt.Printf("Warning: failed to fetch from source '%s': %v, skipping\n", srcName, err)
-			results = append(results, sourceResult{Name: srcName, Err: err})
-
-			continue
-		}
-
-		// Apply source tags if enabled
-		if cfg.Sync.SourceTags {
-			for _, item := range items {
-				currentTags := item.GetTags()
-				item.SetTags(append(currentTags, "source:"+srcName))
-			}
-		}
-
-		fmt.Printf("Found %d items from %s\n", len(items), srcName)
-		results = append(results, sourceResult{Name: srcName, ItemCount: len(items)})
-		allItems = append(allItems, items...)
+		entries = append(entries, entry)
 	}
 
-	fmt.Printf("Total items collected: %d\n", len(allItems))
+	if len(entries) == 0 {
+		return fmt.Errorf("no valid sources could be initialized")
+	}
 
-	// Apply transformer pipeline if configured
-	if cfg.Transformers.Enabled {
-		pipeline := transform.NewPipeline()
+	// Create target and file sink
+	target, err := createTargetWithConfig(finalTargetName, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create target: %w", err)
+	}
 
-		for _, t := range transform.GetAllExampleTransformers() {
-			if err := pipeline.AddTransformer(t); err != nil {
-				return fmt.Errorf("failed to add transformer %s: %w", t.Name(), err)
-			}
+	fileSink := sinks.NewFileSink(target, finalOutputDir)
+
+	// Build transformer pipeline with all transformers
+	pipeline := transform.NewPipeline()
+	for _, t := range transform.GetAllContentProcessingTransformers() {
+		if err := pipeline.AddTransformer(t); err != nil {
+			return fmt.Errorf("failed to add transformer %s: %w", t.Name(), err)
 		}
+	}
 
-		if err := pipeline.Configure(cfg.Transformers); err != nil {
-			return fmt.Errorf("failed to configure transformer pipeline: %w", err)
-		}
+	// Run the full sync pipeline
+	s := syncer.NewMultiSyncer(pipeline)
 
-		transformedItems, err := pipeline.Transform(allItems)
-		if err != nil {
-			return fmt.Errorf("failed to transform items: %w", err)
-		}
-
-		fmt.Printf("Transformed to %d items\n", len(transformedItems))
-		allItems = transformedItems
+	syncResult, err := s.SyncAll(
+		context.Background(),
+		entries,
+		[]interfaces.Sink{fileSink},
+		syncer.MultiSyncOptions{
+			DefaultSince: defaultSinceTime,
+			DefaultLimit: syncLimit,
+			SourceTags:   cfg.Sync.SourceTags,
+			TransformCfg: cfg.Transformers,
+			DryRun:       syncDryRun,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sync failed: %w", err)
 	}
 
 	if syncDryRun {
-		previews, err := target.Preview(allItems, finalOutputDir)
+		previews, err := target.Preview(syncResult.Items, finalOutputDir)
 		if err != nil {
 			return fmt.Errorf("failed to generate preview: %w", err)
 		}
 
 		switch syncOutputFormat {
 		case "json":
-			return outputDryRunJSON(allItems, previews, finalTargetName, finalOutputDir, sourcesToSync)
+			return outputDryRunJSON(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
 		case "summary":
-			return outputDryRunSummary(allItems, previews, finalTargetName, finalOutputDir, sourcesToSync)
+			return outputDryRunSummary(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
 		default:
 			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", syncOutputFormat)
 		}
 	}
 
-	if err := target.Export(allItems, finalOutputDir); err != nil {
-		return fmt.Errorf("failed to export to target: %w", err)
-	}
-
-	// Print summary
-	printSyncSummary(results, len(allItems))
+	printSyncSummary(syncResult.SourceResults, len(syncResult.Items))
 
 	return nil
 }
 
-func printSyncSummary(results []sourceResult, totalItems int) {
+func printSyncSummary(results []syncer.SourceResult, totalItems int) {
 	attempted := len(results)
 	succeeded := 0
 	failed := 0

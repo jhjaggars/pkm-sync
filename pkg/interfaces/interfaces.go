@@ -1,6 +1,7 @@
 package interfaces
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -45,6 +46,13 @@ type FilePreview struct {
 	Content         string // Full content that would be written
 	ExistingContent string // Current content if file exists
 	Conflict        bool   // True if there would be a conflict
+}
+
+// Sink represents any destination that can receive items (file system, vector DB, etc.).
+// This is a more general abstraction than Target, which is file-specific.
+type Sink interface {
+	Name() string
+	Write(ctx context.Context, items []models.FullItem) error
 }
 
 // Syncer coordinates between sources and targets.

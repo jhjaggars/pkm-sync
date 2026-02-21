@@ -349,12 +349,11 @@ func (t *FilterTransformer) shouldIncludeItem(
 	return true
 }
 
-// GetAllExampleTransformers returns all basic example transformers for registration.
+// GetAllExampleTransformers returns all available transformers for registration.
+// This includes all content-processing transformers (content_cleanup, link_extraction,
+// signature_removal, thread_grouping) as well as auto_tagging and filter.
 func GetAllExampleTransformers() []interfaces.Transformer {
-	return []interfaces.Transformer{
-		NewAutoTaggingTransformer(),
-		NewFilterTransformer(),
-	}
+	return GetAllContentProcessingTransformers()
 }
 
 // GetAllContentProcessingTransformers returns all content processing transformers.
