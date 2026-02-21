@@ -13,6 +13,9 @@ import (
 	"google.golang.org/api/gmail/v1"
 )
 
+// threadIDPrefix is the prefix used when constructing item IDs from Gmail thread IDs.
+const threadIDPrefix = "thread_"
+
 // EmailRecipient represents an email recipient with name and email.
 type EmailRecipient struct {
 	Name  string `json:"name"`
@@ -484,7 +487,7 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 	}
 
 	item := &models.Item{
-		ID:         fmt.Sprintf("thread_%s", thread.Id),
+		ID:         threadIDPrefix + thread.Id,
 		Title:      subject,
 		Content:    contentBuilder.String(),
 		SourceType: "gmail",

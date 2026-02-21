@@ -17,6 +17,15 @@ import (
 	"google.golang.org/api/option"
 )
 
+const (
+	// defaultConcurrentWorkers is the default number of concurrent API workers.
+	defaultConcurrentWorkers = 5
+	// throttledConcurrentWorkers is used when request delay is high to avoid rate limiting.
+	throttledConcurrentWorkers = 2
+	// highDelayThreshold is the delay above which worker concurrency is reduced.
+	highDelayThreshold = 100 * time.Millisecond
+)
+
 // Service wraps the Gmail API with configuration and convenience methods.
 type Service struct {
 	client   *http.Client
@@ -533,7 +542,11 @@ func (s *Service) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error
 		return nil, fmt.Errorf("unable to list threads: %w", err)
 	}
 
-	listResp := resp.(*gmail.ListThreadsResponse)
+	listResp, ok := resp.(*gmail.ListThreadsResponse)
+	if !ok || listResp == nil {
+		return nil, fmt.Errorf("unexpected response type from Gmail Threads API")
+	}
+
 	slog.Info("Gmail Threads API response", "source_id", s.sourceID, "threads_found", len(listResp.Threads), "query", query)
 
 	if len(listResp.Threads) == 0 {
@@ -574,9 +587,9 @@ func (s *Service) GetThread(threadID string) (*gmail.Thread, error) {
 
 // fetchThreadsConcurrently fetches full thread details concurrently with rate limiting.
 func (s *Service) fetchThreadsConcurrently(threadList []*gmail.Thread) ([]*gmail.Thread, int) {
-	maxWorkers := 5
-	if s.config.RequestDelay > 100*time.Millisecond {
-		maxWorkers = 2
+	maxWorkers := defaultConcurrentWorkers
+	if s.config.RequestDelay > highDelayThreshold {
+		maxWorkers = throttledConcurrentWorkers
 	}
 
 	threadChan := make(chan *gmail.Thread, len(threadList))
@@ -678,10 +691,10 @@ func handleThreadError(threadID string, err error) error {
 // fetchMessagesConcurrently fetches messages concurrently with rate limiting.
 func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gmail.Message, int) {
 	// Configure concurrency based on configuration and rate limiting needs.
-	maxWorkers := 5 // Conservative default to respect Gmail API limits.
-	if s.config.RequestDelay > 100*time.Millisecond {
+	maxWorkers := defaultConcurrentWorkers
+	if s.config.RequestDelay > highDelayThreshold {
 		// If delay is high, reduce concurrency.
-		maxWorkers = 2
+		maxWorkers = throttledConcurrentWorkers
 	}
 
 	// Create channels for work distribution.
