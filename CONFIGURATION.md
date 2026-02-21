@@ -190,6 +190,55 @@ Gmail integration supports multiple instances (e.g., `gmail_work`, `gmail_person
 | `request_delay` | duration | `100ms` | Delay between API requests |
 | `max_requests` | integer | `100` | Maximum API requests |
 
+### Google Drive Source Settings (`sources.{name}.drive:`)
+
+Settings for `google_drive` type sources:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `name` | string | **required** | Human-readable name for this source |
+| `description` | string | `""` | Optional description |
+| `folder_ids` | array | `[]` | Folder IDs to sync; empty = root only |
+| `recursive` | boolean | `true` | Recurse into subfolders |
+| `include_shared_with_me` | boolean | `false` | Include files shared with you |
+| `include_shared_drives` | boolean | `false` | Include files from shared drives |
+| `workspace_types` | array | `[]` (all) | Types to sync: `"document"`, `"spreadsheet"`, `"presentation"` |
+| `doc_export_format` | string | `"md"` | Export format for Docs: `md`, `txt`, `html` |
+| `sheet_export_format` | string | `"csv"` | Export format for Sheets: `csv`, `html` |
+| `slide_export_format` | string | `"txt"` | Export format for Slides: `txt`, `html` |
+| `query` | string | `""` | Extra Drive API query (appended with AND) |
+| `request_delay` | duration | `0` | Delay between API requests |
+| `max_requests` | integer | `0` | Max API requests per sync (0 = unlimited) |
+
+**Example `google_drive` source configuration:**
+
+```yaml
+sources:
+  my_drive:
+    enabled: true
+    type: google_drive
+    since: 30d
+    drive:
+      name: "My Drive Docs"
+      folder_ids:
+        - "1aBcDeFgHiJkLmNoPqRsTuVwXyZ"  # replace with real folder ID
+      recursive: true
+      workspace_types:
+        - document
+        - spreadsheet
+      doc_export_format: md
+      sheet_export_format: csv
+  shared_drive:
+    enabled: true
+    type: google_drive
+    drive:
+      name: "Team Shared Drive"
+      include_shared_with_me: true
+      include_shared_drives: true
+      workspace_types:
+        - document
+```
+
 ### Enhanced Source Configuration (`sources.{name}:`)
 
 Enhanced source settings support per-instance customization:
@@ -197,7 +246,7 @@ Enhanced source settings support per-instance customization:
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enabled` | boolean | varies | Enable this source |
-| `type` | string | varies | Source type (google_calendar, gmail, slack, jira) |
+| `type` | string | varies | Source type (google_calendar, gmail, google_drive, slack, jira) |
 | `name` | string | `""` | Human-readable instance name |
 | `output_subdir` | string | `""` | Custom subdirectory for this source |
 | `output_target` | string | `""` | Override default target for this source |

@@ -108,7 +108,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if sourceConfig.Type != "gmail" && sourceConfig.Type != "google_calendar" {
+		if sourceConfig.Type != "gmail" && sourceConfig.Type != "google_calendar" && sourceConfig.Type != "google_drive" {
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
 
 			continue

@@ -93,6 +93,18 @@ func GetDefaultConfig() *models.Config {
 					DocFormats:        []string{},
 				},
 			},
+			"google_drive": {
+				Enabled: false,
+				Type:    "google_drive",
+				Drive: models.DriveSourceConfig{
+					Name:            "My Drive",
+					Description:     "Sync Google Docs, Sheets, and Slides from Google Drive",
+					FolderIDs:       []string{},
+					Recursive:       true,
+					WorkspaceTypes:  []string{},
+					DocExportFormat: "md",
+				},
+			},
 		},
 		Targets: map[string]models.TargetConfig{
 			"obsidian": {
@@ -279,6 +291,28 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 	case "gmail":
 		if config.Gmail.Name == "" {
 			return fmt.Errorf("name is required for gmail sources")
+		}
+	case "google_drive":
+		if config.Drive.Name == "" {
+			return fmt.Errorf("name is required for google_drive sources")
+		}
+
+		validDocFormats := map[string]bool{"md": true, "txt": true, "html": true, "": true}
+		if !validDocFormats[config.Drive.DocExportFormat] {
+			return fmt.Errorf("invalid doc_export_format %q for google_drive (supported: md, txt, html)",
+				config.Drive.DocExportFormat)
+		}
+
+		validSheetFormats := map[string]bool{"csv": true, "html": true, "": true}
+		if !validSheetFormats[config.Drive.SheetExportFormat] {
+			return fmt.Errorf("invalid sheet_export_format %q for google_drive (supported: csv, html)",
+				config.Drive.SheetExportFormat)
+		}
+
+		validSlideFormats := map[string]bool{"txt": true, "html": true, "": true}
+		if !validSlideFormats[config.Drive.SlideExportFormat] {
+			return fmt.Errorf("invalid slide_export_format %q for google_drive (supported: txt, html)",
+				config.Drive.SlideExportFormat)
 		}
 	case "slack":
 		// Add slack-specific validations if needed

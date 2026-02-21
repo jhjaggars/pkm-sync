@@ -1,187 +1,212 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
+	"strings"
 
-	"pkm-sync/internal/sources/google/auth"
-	"pkm-sync/internal/sources/google/calendar"
-	"pkm-sync/internal/sources/google/drive"
+	"pkm-sync/internal/config"
+	"pkm-sync/internal/sinks"
+	syncer "pkm-sync/internal/sync"
+	"pkm-sync/internal/transform"
+	"pkm-sync/pkg/interfaces"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	driveOutputDir string
-	driveEventID   string
+	driveSourceName   string
+	driveTargetName   string
+	driveOutputDir    string
+	driveSince        string
+	driveDryRun       bool
+	driveLimit        int
+	driveOutputFormat string
 )
 
 var driveCmd = &cobra.Command{
 	Use:   "drive",
-	Short: "Export Google Drive documents to markdown",
-	Long: `Export Google Drive documents (Google Docs, Sheets, etc.) to markdown files.
+	Short: "Sync Google Drive documents to PKM systems",
+	Long: `Sync Google Drive documents (Google Docs, Sheets, Slides) to PKM targets.
 
-You can export docs from:
-- A specific calendar event by ID
-- All events in a date range
-- Today's events (default)
+Configure google_drive sources in your config file to specify folders,
+shared drives, and export formats.
 
-Or use the fetch subcommand to fetch a single document by URL:
-  pkm-sync drive fetch <URL>`,
+Use the fetch subcommand to fetch a single document by URL:
+  pkm-sync drive fetch <URL>
+
+Examples:
+  pkm-sync drive --source my_drive --target obsidian --output ./vault
+  pkm-sync drive --since 7d --dry-run
+  pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit"`,
 	RunE: runDriveCommand,
 }
 
 func init() {
 	rootCmd.AddCommand(driveCmd)
-	driveCmd.Flags().StringVarP(&driveOutputDir, "output", "o", "./exported-docs", "Output directory for exported markdown files")
-	driveCmd.Flags().StringVar(&driveEventID, "event-id", "", "Export docs from specific event ID")
-	// Date range flags are inherited from rootCmd as persistent flags
+	driveCmd.Flags().StringVar(&driveSourceName, "source", "", "Drive source name (as configured in config file)")
+	driveCmd.Flags().StringVar(&driveTargetName, "target", "", "PKM target (obsidian, logseq)")
+	driveCmd.Flags().StringVarP(&driveOutputDir, "output", "o", "", "Output directory")
+	driveCmd.Flags().StringVar(&driveSince, "since", "", "Sync documents modified since (7d, 2006-01-02, today)")
+	driveCmd.Flags().BoolVar(&driveDryRun, "dry-run", false, "Show what would be synced without making changes")
+	driveCmd.Flags().IntVar(&driveLimit, "limit", 100, "Maximum number of documents to fetch")
+	driveCmd.Flags().StringVar(&driveOutputFormat, "format", "summary", "Output format for dry-run (summary, json)")
 }
 
 func runDriveCommand(cmd *cobra.Command, args []string) error {
-	// Get authenticated client
-	client, err := auth.GetClient()
+	cfg, err := config.LoadConfig()
 	if err != nil {
-		return fmt.Errorf("failed to get authenticated client: %w", err)
+		cfg = config.GetDefaultConfig()
 	}
 
-	// Create services
-	calendarService, err := calendar.NewService(client)
-	if err != nil {
-		return fmt.Errorf("failed to create calendar service: %w", err)
-	}
-
-	driveService, err := drive.NewService(client)
-	if err != nil {
-		return fmt.Errorf("failed to create drive service: %w", err)
-	}
-
-	// Create output directory
-	if err := os.MkdirAll(driveOutputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	var totalExported int
-
-	if driveEventID != "" {
-		// Export from specific event
-		count, err := driveExportFromEventID(calendarService, driveService, driveEventID)
-		if err != nil {
-			return err
-		}
-
-		totalExported = count
+	// Determine which Drive sources to sync
+	var sourcesToSync []string
+	if driveSourceName != "" {
+		sourcesToSync = []string{driveSourceName}
 	} else {
-		// Export from date range
-		start, end, err := getDriveExportDateRange()
-		if err != nil {
-			return err
-		}
-
-		count, err := driveExportFromDateRange(calendarService, driveService, start, end)
-		if err != nil {
-			return err
-		}
-
-		totalExported = count
+		sourcesToSync = getEnabledDriveSources(cfg)
 	}
 
-	fmt.Printf("\nDrive export complete! %d documents exported to %s\n", totalExported, driveOutputDir)
+	if len(sourcesToSync) == 0 {
+		return fmt.Errorf("no Drive sources configured. Configure google_drive sources in your config file or use --source flag")
+	}
 
-	return nil
-}
+	// Apply config defaults, then CLI overrides
+	finalTargetName := cfg.Sync.DefaultTarget
+	if driveTargetName != "" {
+		finalTargetName = driveTargetName
+	}
 
-func driveExportFromEventID(calendarService *calendar.Service, driveService *drive.Service, eventID string) (int, error) {
-	fmt.Printf("Exporting docs from event ID: %s\n", eventID)
+	finalOutputDir := cfg.Sync.DefaultOutputDir
+	if driveOutputDir != "" {
+		finalOutputDir = driveOutputDir
+	}
 
-	// Note: We'd need to add a GetEvent method to calendar service
-	// For now, we'll search in today's events
-	events, err := calendarService.GetEventsInRange(
-		time.Now().Add(-24*time.Hour),
-		time.Now().Add(24*time.Hour),
-		100,
-	)
+	finalSince := cfg.Sync.DefaultSince
+	if driveSince != "" {
+		finalSince = driveSince
+	}
+
+	defaultSinceTime, err := parseSinceTime(finalSince)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get events: %w", err)
+		return fmt.Errorf("invalid since parameter: %w", err)
 	}
 
-	for _, event := range events {
-		if event.Id == eventID {
-			return driveExportFromSingleEvent(driveService, event.Summary, event.Description)
-		}
-	}
+	fmt.Printf("Syncing Drive from sources [%s] to %s (output: %s, since: %s)\n",
+		strings.Join(sourcesToSync, ", "), finalTargetName, finalOutputDir, finalSince)
 
-	return 0, fmt.Errorf("event with ID %s not found", eventID)
-}
+	// Build source entries (pre-create sources with per-source options)
+	var entries []syncer.SourceEntry
 
-func driveExportFromDateRange(calendarService *calendar.Service, driveService *drive.Service, start, end time.Time) (int, error) {
-	fmt.Printf("Exporting docs from events between %s and %s\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
-
-	events, err := calendarService.GetEventsInRange(start, end, 100)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get events: %w", err)
-	}
-
-	var totalExported int
-
-	for _, event := range events {
-		count, err := driveExportFromSingleEvent(driveService, event.Summary, event.Description)
-		if err != nil {
-			fmt.Printf("Warning: failed to export docs from event '%s': %v\n", event.Summary, err)
+	for _, srcName := range sourcesToSync {
+		sourceConfig, exists := cfg.Sources[srcName]
+		if !exists {
+			fmt.Printf("Warning: Drive source '%s' not configured, skipping\n", srcName)
 
 			continue
 		}
 
-		totalExported += count
+		if !sourceConfig.Enabled {
+			fmt.Printf("Drive source '%s' is disabled, skipping\n", srcName)
+
+			continue
+		}
+
+		if sourceConfig.Type != "google_drive" {
+			fmt.Printf("Warning: source '%s' is not a Drive source (type: %s), skipping\n", srcName, sourceConfig.Type)
+
+			continue
+		}
+
+		src, err := createSourceWithConfig(srcName, sourceConfig, nil)
+		if err != nil {
+			fmt.Printf("Warning: failed to create Drive source '%s': %v, skipping\n", srcName, err)
+
+			continue
+		}
+
+		entry := syncer.SourceEntry{Name: srcName, Src: src}
+
+		// Per-source since: config overrides default, CLI flag takes precedence
+		if sourceConfig.Since != "" && driveSince == "" {
+			t, err := parseSinceTime(sourceConfig.Since)
+			if err != nil {
+				fmt.Printf("Warning: invalid since time for Drive source '%s': %v, using default\n", srcName, err)
+			} else {
+				entry.Since = t
+			}
+		}
+
+		// Per-source limit (cap at 2500)
+		if sourceConfig.Google.MaxResults > 0 {
+			if sourceConfig.Google.MaxResults > 2500 {
+				fmt.Printf("Warning: max_results for source '%s' is %d (maximum: 2500), capping\n", srcName, sourceConfig.Google.MaxResults)
+
+				entry.Limit = 2500
+			} else {
+				entry.Limit = sourceConfig.Google.MaxResults
+			}
+		}
+
+		entries = append(entries, entry)
 	}
 
-	return totalExported, nil
-}
+	if len(entries) == 0 {
+		return fmt.Errorf("no valid Drive sources could be initialized")
+	}
 
-func driveExportFromSingleEvent(driveService *drive.Service, eventSummary, eventDescription string) (int, error) {
-	// Create subdirectory for this event
-	eventDir := filepath.Join(driveOutputDir, sanitizeEventName(eventSummary))
-
-	exportedFiles, err := driveService.ExportAttachedDocsFromEvent(eventDescription, eventDir)
+	// Create target and file sink
+	target, err := createTargetWithConfig(finalTargetName, cfg)
 	if err != nil {
-		return 0, fmt.Errorf("failed to export docs from event '%s': %w", eventSummary, err)
+		return fmt.Errorf("failed to create target: %w", err)
 	}
 
-	if len(exportedFiles) > 0 {
-		fmt.Printf("Exported %d docs from event '%s'\n", len(exportedFiles), eventSummary)
+	fileSink := sinks.NewFileSink(target, finalOutputDir)
+
+	// Build transformer pipeline with all transformers
+	pipeline := transform.NewPipeline()
+	for _, t := range transform.GetAllContentProcessingTransformers() {
+		if err := pipeline.AddTransformer(t); err != nil {
+			return fmt.Errorf("failed to add transformer %s: %w", t.Name(), err)
+		}
 	}
 
-	return len(exportedFiles), nil
-}
+	// Run the full sync pipeline
+	s := syncer.NewMultiSyncer(pipeline)
 
-func getDriveExportDateRange() (time.Time, time.Time, error) {
-	var (
-		start, end time.Time
-		err        error
+	syncResult, err := s.SyncAll(
+		context.Background(),
+		entries,
+		[]interfaces.Sink{fileSink},
+		syncer.MultiSyncOptions{
+			DefaultSince: defaultSinceTime,
+			DefaultLimit: driveLimit,
+			SourceTags:   cfg.Sync.SourceTags,
+			TransformCfg: cfg.Transformers,
+			DryRun:       driveDryRun,
+		},
 	)
-
-	if startDate != "" {
-		start, err = parseDateTime(startDate)
-		if err != nil {
-			return start, end, fmt.Errorf("invalid start date: %w", err)
-		}
-	} else {
-		// Default: start of today
-		now := time.Now()
-		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if err != nil {
+		return fmt.Errorf("sync failed: %w", err)
 	}
 
-	if endDate != "" {
-		end, err = parseDateTime(endDate)
+	if driveDryRun {
+		previews, err := target.Preview(syncResult.Items, finalOutputDir)
 		if err != nil {
-			return start, end, fmt.Errorf("invalid end date: %w", err)
+			return fmt.Errorf("failed to generate preview: %w", err)
 		}
-	} else {
-		// Default: start + 24 hours
-		end = start.Add(24 * time.Hour)
+
+		switch driveOutputFormat {
+		case "json":
+			return outputDryRunJSON(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
+		case "summary":
+			return outputDryRunSummary(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
+		default:
+			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", driveOutputFormat)
+		}
 	}
 
-	return start, end, nil
+	fmt.Printf("Successfully exported %d documents\n", len(syncResult.Items))
+
+	return nil
 }

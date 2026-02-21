@@ -50,8 +50,15 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 		}
 
 		return source, nil
+	case "google_drive":
+		source := google.NewGoogleSourceWithConfig(sourceID, sourceConfig)
+		if err := source.Configure(nil, client); err != nil {
+			return nil, err
+		}
+
+		return source, nil
 	default:
-		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail' (others like slack, jira are planned for future releases)", sourceConfig.Type)
+		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail', 'google_drive' (others like slack, jira are planned for future releases)", sourceConfig.Type)
 	}
 }
 
@@ -158,6 +165,29 @@ func getEnabledGmailSources(cfg *models.Config) []string {
 
 	for srcName, sourceConfig := range cfg.Sources {
 		if sourceConfig.Enabled && sourceConfig.Type == "gmail" {
+			enabledSources = append(enabledSources, srcName)
+		}
+	}
+
+	return enabledSources
+}
+
+// getEnabledDriveSources returns enabled Google Drive source names from config.
+func getEnabledDriveSources(cfg *models.Config) []string {
+	var enabledSources []string
+
+	if len(cfg.Sync.EnabledSources) > 0 {
+		for _, srcName := range cfg.Sync.EnabledSources {
+			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "google_drive" {
+				enabledSources = append(enabledSources, srcName)
+			}
+		}
+
+		return enabledSources
+	}
+
+	for srcName, sourceConfig := range cfg.Sources {
+		if sourceConfig.Enabled && sourceConfig.Type == "google_drive" {
 			enabledSources = append(enabledSources, srcName)
 		}
 	}
