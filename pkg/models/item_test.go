@@ -6,15 +6,15 @@ import (
 	"time"
 )
 
-// TestItemInterfaceImplementation verifies that both BasicItem and Thread implement ItemInterface.
-func TestItemInterfaceImplementation(t *testing.T) {
-	// Test BasicItem implements ItemInterface
-	var basicItem ItemInterface = NewBasicItem("test-id", "Test Title")
+// TestFullItemImplementation verifies that both BasicItem and Thread implement FullItem.
+func TestFullItemImplementation(t *testing.T) {
+	// Test BasicItem implements FullItem
+	var basicItem FullItem = NewBasicItem("test-id", "Test Title")
 	if basicItem == nil {
 		t.Fatal("NewBasicItem should not return nil")
 	}
 
-	// Test Thread implements ItemInterface
+	// Test Thread implements FullItem
 	thread := NewThread("thread-id", "Thread Subject")
 	if thread.GetID() == "" {
 		t.Fatal("NewThread should have valid ID")
@@ -252,8 +252,8 @@ func TestLegacyCompatibility(t *testing.T) {
 		Tags:       []string{"legacy"},
 	}
 
-	// Convert to ItemInterface
-	itemInterface := AsItemInterface(legacyItem)
+	// Convert to FullItem
+	itemInterface := AsFullItem(legacyItem)
 	if itemInterface.GetID() != "legacy-id" {
 		t.Errorf("Expected ID 'legacy-id', got '%s'", itemInterface.GetID())
 	}

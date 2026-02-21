@@ -181,7 +181,7 @@ type DryRunOutput struct {
 	Sources      []string                  `json:"sources"`
 	TotalItems   int                       `json:"total_items"`
 	Summary      DryRunSummary             `json:"summary"`
-	Items        []models.ItemInterface    `json:"items"`
+	Items        []models.FullItem         `json:"items"`
 	FilePreviews []*interfaces.FilePreview `json:"file_previews"`
 }
 
@@ -193,7 +193,7 @@ type DryRunSummary struct {
 	ConflictCount int `json:"conflict_count"`
 }
 
-func outputDryRunJSON(items []models.ItemInterface, previews []*interfaces.FilePreview, target, outputDir string, sources []string) error {
+func outputDryRunJSON(items []models.FullItem, previews []*interfaces.FilePreview, target, outputDir string, sources []string) error {
 	summary := calculateSummary(previews)
 
 	output := DryRunOutput{
@@ -216,7 +216,7 @@ func outputDryRunJSON(items []models.ItemInterface, previews []*interfaces.FileP
 	return nil
 }
 
-func outputDryRunSummary(items []models.ItemInterface, previews []*interfaces.FilePreview, target, outputDir string, _ []string) error {
+func outputDryRunSummary(items []models.FullItem, previews []*interfaces.FilePreview, target, outputDir string, _ []string) error {
 	fmt.Printf("=== DRY RUN: Preview of sync operation ===\n")
 	fmt.Printf("Target: %s\nOutput directory: %s\nTotal items: %d\n\n", target, outputDir, len(items))
 

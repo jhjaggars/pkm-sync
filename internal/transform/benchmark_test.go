@@ -152,8 +152,8 @@ func BenchmarkTransformPipeline(b *testing.B) {
 
 // Helper functions to create benchmark data
 
-func createBenchmarkHTMLItems(count int) []models.ItemInterface {
-	items := make([]models.ItemInterface, count)
+func createBenchmarkHTMLItems(count int) []models.FullItem {
+	items := make([]models.FullItem, count)
 
 	complexHTML := `<h1>Important Document</h1>
 <p>This is a <strong>complex</strong> HTML document with <em>various</em> formatting.</p>
@@ -189,8 +189,8 @@ func createBenchmarkHTMLItems(count int) []models.ItemInterface {
 	return items
 }
 
-func createBenchmarkLinkItems(count int) []models.ItemInterface {
-	items := make([]models.ItemInterface, count)
+func createBenchmarkLinkItems(count int) []models.FullItem {
+	items := make([]models.FullItem, count)
 
 	contentWithLinks := `Check out these resources:
 - Documentation: https://docs.example.com/guide
@@ -220,8 +220,8 @@ func createBenchmarkLinkItems(count int) []models.ItemInterface {
 	return items
 }
 
-func createBenchmarkSignatureItems(count int) []models.ItemInterface {
-	items := make([]models.ItemInterface, count)
+func createBenchmarkSignatureItems(count int) []models.FullItem {
+	items := make([]models.FullItem, count)
 
 	contentWithSignature := `Thank you for the update on the project status. 
 
@@ -258,8 +258,8 @@ This email is confidential and intended solely for the addressee.`
 	return items
 }
 
-func createBenchmarkThreadItems(count int) []models.ItemInterface {
-	items := make([]models.ItemInterface, count)
+func createBenchmarkThreadItems(count int) []models.FullItem {
+	items := make([]models.FullItem, count)
 
 	// Create items that form multiple threads (5 items per thread on average)
 	for i := 0; i < count; i++ {
@@ -285,8 +285,8 @@ func createBenchmarkThreadItems(count int) []models.ItemInterface {
 	return items
 }
 
-func createBenchmarkRealisticItems(count int) []models.ItemInterface {
-	items := make([]models.ItemInterface, count)
+func createBenchmarkRealisticItems(count int) []models.FullItem {
+	items := make([]models.FullItem, count)
 
 	templates := []string{
 		// Gmail-style email

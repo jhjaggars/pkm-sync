@@ -60,7 +60,7 @@ func TestFromGmailMessage(t *testing.T) {
 				linkTransformer := transform.NewLinkExtractionTransformer()
 				linkTransformer.Configure(map[string]interface{}{"enabled": true})
 
-				transformedItems, err := linkTransformer.Transform([]models.ItemInterface{models.AsItemInterface(item)})
+				transformedItems, err := linkTransformer.Transform([]models.FullItem{models.AsFullItem(item)})
 				if err != nil || len(transformedItems) != 1 {
 					return false
 				}

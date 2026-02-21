@@ -110,7 +110,7 @@ func (t *AutoTaggingTransformer) Transform(items []models.FullItem) ([]models.Fu
 	transformedItems := make([]models.FullItem, len(items))
 
 	for i, item := range items {
-		// Apply tagging rules directly to ItemInterface
+		// Apply tagging rules directly to FullItem
 		newTags := t.applyTaggingRulesInterface(item)
 
 		if len(newTags) > 0 {

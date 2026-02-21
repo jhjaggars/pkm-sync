@@ -14,7 +14,7 @@ type MockTransformer struct {
 	name          string
 	shouldFail    bool
 	config        map[string]interface{}
-	TransformFunc func(items []models.ItemInterface) ([]models.ItemInterface, error)
+	TransformFunc func(items []models.FullItem) ([]models.FullItem, error)
 }
 
 // Compile-time check to ensure MockTransformer implements interfaces.Transformer.
@@ -30,7 +30,7 @@ func (m *MockTransformer) Configure(config map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockTransformer) Transform(items []models.ItemInterface) ([]models.ItemInterface, error) {
+func (m *MockTransformer) Transform(items []models.FullItem) ([]models.FullItem, error) {
 	if m.TransformFunc != nil {
 		return m.TransformFunc(items)
 	}
@@ -40,11 +40,11 @@ func (m *MockTransformer) Transform(items []models.ItemInterface) ([]models.Item
 	}
 
 	// Add a tag to indicate this transformer ran
-	transformedItems := make([]models.ItemInterface, len(items))
+	transformedItems := make([]models.FullItem, len(items))
 
 	for i, item := range items {
 		// Create a copy with the new tag
-		var newItem models.ItemInterface
+		var newItem models.FullItem
 
 		if thread, isThread := models.AsThread(item); isThread {
 			newThread := models.NewThread(thread.GetID(), thread.GetTitle())
@@ -218,8 +218,8 @@ func TestTransformDisabled(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item"}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item"}),
 	}
 
 	result, err := pipeline.Transform(items)
@@ -251,8 +251,8 @@ func TestTransformSuccess(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
 	}
 
 	result, err := pipeline.Transform(items)
@@ -296,8 +296,8 @@ func TestTransformFailFast(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
 	}
 
 	_, err := pipeline.Transform(items)
@@ -323,8 +323,8 @@ func TestTransformLogAndContinue(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
 	}
 
 	result, err := pipeline.Transform(items)
@@ -367,9 +367,9 @@ func TestTransformLogAndContinueWithPartialSuccess(t *testing.T) {
 	transformer1 := &MockTransformer{name: "transformer1"}
 	failingTransformer := &MockTransformer{
 		name: "failing_transformer",
-		TransformFunc: func(items []models.ItemInterface) ([]models.ItemInterface, error) {
+		TransformFunc: func(items []models.FullItem) ([]models.FullItem, error) {
 			// Partially succeeds, returns one item and an error
-			return []models.ItemInterface{items[0]}, fmt.Errorf("partial failure")
+			return []models.FullItem{items[0]}, fmt.Errorf("partial failure")
 		},
 	}
 	transformer3 := &MockTransformer{name: "transformer3"}
@@ -385,9 +385,9 @@ func TestTransformLogAndContinueWithPartialSuccess(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
-		models.AsItemInterface(&models.Item{ID: "2", Title: "Another Item", Tags: []string{}}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
+		models.AsFullItem(&models.Item{ID: "2", Title: "Another Item", Tags: []string{}}),
 	}
 
 	result, err := pipeline.Transform(items)
@@ -422,8 +422,8 @@ func TestTransformSkipItem(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item", Tags: []string{}}),
 	}
 
 	result, err := pipeline.Transform(items)
@@ -440,7 +440,7 @@ func TestTransformPanicHandling(t *testing.T) {
 	pipeline := NewPipeline()
 	panickingTransformer := &MockTransformer{name: "panicker", shouldFail: true}
 	// Overwrite the transform function to cause a panic
-	panickingTransformer.TransformFunc = func(items []models.ItemInterface) ([]models.ItemInterface, error) {
+	panickingTransformer.TransformFunc = func(items []models.FullItem) ([]models.FullItem, error) {
 		panic("test panic")
 	}
 
@@ -453,8 +453,8 @@ func TestTransformPanicHandling(t *testing.T) {
 	}
 	pipeline.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Test Item"}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Test Item"}),
 	}
 
 	_, err := pipeline.Transform(items)

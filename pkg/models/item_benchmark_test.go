@@ -29,8 +29,8 @@ func BenchmarkItemStructAccess(b *testing.B) {
 	}
 }
 
-// BenchmarkBasicItemInterfaceAccess benchmarks interface method access.
-func BenchmarkBasicItemInterfaceAccess(b *testing.B) {
+// BenchmarkBasicFullItemAccess benchmarks interface method access.
+func BenchmarkBasicFullItemAccess(b *testing.B) {
 	item := NewBasicItem("test-id", "Test Title")
 	item.SetContent("Test content")
 	item.SetCreatedAt(time.Now())
@@ -143,10 +143,10 @@ func BenchmarkItemSliceProcessing(b *testing.B) {
 	}
 }
 
-// BenchmarkItemInterfaceSliceProcessing benchmarks processing slices of ItemInterface.
-func BenchmarkItemInterfaceSliceProcessing(b *testing.B) {
-	// Create slice of ItemInterface
-	items := make([]ItemInterface, 100)
+// BenchmarkFullItemSliceProcessing benchmarks processing slices of FullItem.
+func BenchmarkFullItemSliceProcessing(b *testing.B) {
+	// Create slice of FullItem
+	items := make([]FullItem, 100)
 
 	for i := 0; i < 100; i++ {
 		item := NewBasicItem("test-id", "Test Title")
@@ -180,7 +180,7 @@ func BenchmarkLegacyConversion(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Convert legacy to interface and back
-		interfaceItem := AsItemInterface(legacyItem)
+		interfaceItem := AsFullItem(legacyItem)
 		_ = AsItemStruct(interfaceItem)
 	}
 }
@@ -211,7 +211,7 @@ func BenchmarkTypeAssertion(b *testing.B) {
 	basicItem := NewBasicItem("basic-id", "Basic Item")
 	thread := NewThread("thread-id", "Thread Subject")
 
-	items := []ItemInterface{basicItem, thread, basicItem, thread}
+	items := []FullItem{basicItem, thread, basicItem, thread}
 
 	b.ResetTimer()
 

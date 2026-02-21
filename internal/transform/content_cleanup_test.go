@@ -166,21 +166,21 @@ func TestContentCleanupTransformer_Transform(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		items    []models.ItemInterface
-		expected []models.ItemInterface
+		items    []models.FullItem
+		expected []models.FullItem
 	}{
 		{
 			name: "Process HTML content",
-			items: []models.ItemInterface{
-				func() models.ItemInterface {
+			items: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("1", "Re: Test Email")
 					item.SetContent("<p>Hello <strong>world</strong>!</p>")
 
 					return item
 				}(),
 			},
-			expected: []models.ItemInterface{
-				func() models.ItemInterface {
+			expected: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("1", "Test Email")
 					item.SetContent("Hello **world**!")
 
@@ -190,16 +190,16 @@ func TestContentCleanupTransformer_Transform(t *testing.T) {
 		},
 		{
 			name: "Strip quoted text",
-			items: []models.ItemInterface{
-				func() models.ItemInterface {
+			items: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("2", "Fwd: Meeting Notes")
 					item.SetContent("New comment\n\n> Previous email content")
 
 					return item
 				}(),
 			},
-			expected: []models.ItemInterface{
-				func() models.ItemInterface {
+			expected: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("2", "Meeting Notes")
 					item.SetContent("New comment")
 
@@ -209,16 +209,16 @@ func TestContentCleanupTransformer_Transform(t *testing.T) {
 		},
 		{
 			name: "No changes needed",
-			items: []models.ItemInterface{
-				func() models.ItemInterface {
+			items: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("3", "Clean Title")
 					item.SetContent("Clean content without HTML or quotes")
 
 					return item
 				}(),
 			},
-			expected: []models.ItemInterface{
-				func() models.ItemInterface {
+			expected: []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("3", "Clean Title")
 					item.SetContent("Clean content without HTML or quotes")
 
@@ -292,8 +292,8 @@ func TestContentCleanupTransformer_ConfigurationOptions(t *testing.T) {
 				t.Fatalf("Failed to configure: %v", err)
 			}
 
-			items := []models.ItemInterface{
-				func() models.ItemInterface {
+			items := []models.FullItem{
+				func() models.FullItem {
 					item := models.NewBasicItem("test", "Test")
 					item.SetContent(tt.input)
 

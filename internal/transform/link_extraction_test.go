@@ -200,10 +200,10 @@ func TestLinkExtractionTransformer_Transform(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Convert to ItemInterface
-			interfaceItems := make([]models.ItemInterface, len(tt.items))
+			// Convert to FullItem
+			interfaceItems := make([]models.FullItem, len(tt.items))
 			for i, item := range tt.items {
-				interfaceItems[i] = models.AsItemInterface(item)
+				interfaceItems[i] = models.AsFullItem(item)
 			}
 
 			result, err := transformer.Transform(interfaceItems)

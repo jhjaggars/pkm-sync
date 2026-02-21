@@ -13,7 +13,7 @@ import (
 
 // MockSource implements interfaces.Source for testing pipeline integration.
 type MockSource struct {
-	items []models.ItemInterface
+	items []models.FullItem
 }
 
 func (m *MockSource) Name() string {
@@ -24,7 +24,7 @@ func (m *MockSource) Configure(config map[string]interface{}, client *http.Clien
 	return nil
 }
 
-func (m *MockSource) Fetch(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (m *MockSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) {
 	return m.items, nil
 }
 
@@ -34,7 +34,7 @@ func (m *MockSource) SupportsRealtime() bool {
 
 // MockTarget implements interfaces.Target for testing pipeline integration.
 type MockTarget struct {
-	exportedItems []models.ItemInterface
+	exportedItems []models.FullItem
 }
 
 func (m *MockTarget) Name() string {
@@ -45,7 +45,7 @@ func (m *MockTarget) Configure(config map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockTarget) Export(items []models.ItemInterface, outputDir string) error {
+func (m *MockTarget) Export(items []models.FullItem, outputDir string) error {
 	m.exportedItems = items
 
 	return nil
@@ -63,15 +63,15 @@ func (m *MockTarget) FormatMetadata(metadata map[string]interface{}) string {
 	return ""
 }
 
-func (m *MockTarget) Preview(items []models.ItemInterface, outputDir string) ([]*interfaces.FilePreview, error) {
+func (m *MockTarget) Preview(items []models.FullItem, outputDir string) ([]*interfaces.FilePreview, error) {
 	return nil, nil
 }
 
 // TestPipelineIntegrationWithSyncEngine tests the complete flow from source -> pipeline -> target.
 func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 	// Create test items with content that will trigger transformations
-	testItems := []models.ItemInterface{
-		func() models.ItemInterface {
+	testItems := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "  Re: Important Meeting  ")
 			item.SetContent("  This is about a meeting\n\n\n\nwith urgent details  ")
 			item.SetSourceType("test_source")
@@ -80,7 +80,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 
 			return item
 		}(),
-		func() models.ItemInterface {
+		func() models.FullItem {
 			item := models.NewBasicItem("2", "Short note")
 			item.SetContent("Too short")
 			item.SetSourceType("test_source")
@@ -190,8 +190,8 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 
 // TestPipelineIntegrationErrorHandling tests that error handling works correctly in the sync engine.
 func TestPipelineIntegrationErrorHandling(t *testing.T) {
-	testItems := []models.ItemInterface{
-		func() models.ItemInterface {
+	testItems := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "Test Item")
 			item.SetContent("Test content")
 			item.SetSourceType("test_source")
@@ -354,10 +354,10 @@ func TestGmailTransformerIntegration(t *testing.T) {
 	}
 
 	// Apply transformations
-	// Convert legacy items to ItemInterface
-	interfaceItems := make([]models.ItemInterface, len(gmailItems))
+	// Convert legacy items to FullItem
+	interfaceItems := make([]models.FullItem, len(gmailItems))
 	for i, item := range gmailItems {
-		interfaceItems[i] = models.AsItemInterface(item)
+		interfaceItems[i] = models.AsFullItem(item)
 	}
 
 	result, err := pipeline.Transform(interfaceItems)
@@ -371,9 +371,9 @@ func TestGmailTransformerIntegration(t *testing.T) {
 	}
 
 	// Find the consolidated thread
-	var consolidated models.ItemInterface
+	var consolidated models.FullItem
 
-	var individual models.ItemInterface
+	var individual models.FullItem
 
 	for _, item := range result {
 		if strings.Contains(item.GetTitle(), "Thread_") {
@@ -506,10 +506,10 @@ func TestTransformersWithCalendarItems(t *testing.T) {
 		"remove_extra_whitespace": true,
 	})
 
-	// Convert to ItemInterface
-	interfaceItems := make([]models.ItemInterface, len(calendarItems))
+	// Convert to FullItem
+	interfaceItems := make([]models.FullItem, len(calendarItems))
 	for i, item := range calendarItems {
-		interfaceItems[i] = models.AsItemInterface(item)
+		interfaceItems[i] = models.AsFullItem(item)
 	}
 
 	result, err := contentCleanup.Transform(interfaceItems)
@@ -609,10 +609,10 @@ func TestTransformersWithDriveItems(t *testing.T) {
 		"max_signature_lines": 3,
 	})
 
-	// Convert to ItemInterface
-	interfaceItems := make([]models.ItemInterface, len(driveItems))
+	// Convert to FullItem
+	interfaceItems := make([]models.FullItem, len(driveItems))
 	for i, item := range driveItems {
-		interfaceItems[i] = models.AsItemInterface(item)
+		interfaceItems[i] = models.AsFullItem(item)
 	}
 
 	result, err := signatureRemoval.Transform(interfaceItems)

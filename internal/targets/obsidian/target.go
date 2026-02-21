@@ -68,7 +68,7 @@ func (o *ObsidianTarget) exportItem(item models.FullItem, outputDir string) erro
 	return os.WriteFile(filePath, []byte(content), 0644)
 }
 
-func (o *ObsidianTarget) formatContent(item models.ItemInterface) string {
+func (o *ObsidianTarget) formatContent(item models.FullItem) string {
 	// Handle different item types
 	if models.IsThread(item) {
 		return o.formatThreadContent(item)
@@ -78,7 +78,7 @@ func (o *ObsidianTarget) formatContent(item models.ItemInterface) string {
 	return o.formatBasicItemContent(item)
 }
 
-func (o *ObsidianTarget) formatBasicItemContent(item models.ItemInterface) string {
+func (o *ObsidianTarget) formatBasicItemContent(item models.FullItem) string {
 	var sb strings.Builder
 
 	// YAML frontmatter
@@ -137,7 +137,7 @@ func (o *ObsidianTarget) formatBasicItemContent(item models.ItemInterface) strin
 	return sb.String()
 }
 
-func (o *ObsidianTarget) formatThreadContent(item models.ItemInterface) string {
+func (o *ObsidianTarget) formatThreadContent(item models.FullItem) string {
 	thread, ok := models.AsThread(item)
 	if !ok {
 		// Fallback to basic item formatting
@@ -188,7 +188,7 @@ func (o *ObsidianTarget) formatThreadContent(item models.ItemInterface) string {
 }
 
 // formatThreadMessage formats a single message within a thread to reduce complexity.
-func (o *ObsidianTarget) formatThreadMessage(sb *strings.Builder, messageNum int, message models.ItemInterface) {
+func (o *ObsidianTarget) formatThreadMessage(sb *strings.Builder, messageNum int, message models.FullItem) {
 	sb.WriteString(fmt.Sprintf("### Message %d: %s\n\n", messageNum, message.GetTitle()))
 
 	// Message metadata
