@@ -4,6 +4,7 @@
 # mirroring the checks run in the CI/CD pipeline.
 
 # Go parameters
+BINARY_NAME := pkm-sync
 GO_PACKAGES := ./...
 GO_BUILD_CMD := go build -v $(GO_PACKAGES)
 GO_TEST_CMD := go test -v -race $(GO_PACKAGES)
@@ -43,6 +44,18 @@ test:
 build:
 	@echo "🏗️ Building project..."
 	@$(GO_BUILD_CMD)
+
+# Target: binary - Builds a named pkm-sync binary.
+.PHONY: binary
+binary:
+	@echo "🏗️ Building binary..."
+	@go build -o $(BINARY_NAME) ./cmd
+
+# Target: clean - Removes the built binary.
+.PHONY: clean
+clean:
+	@echo "🧹 Cleaning built binary..."
+	@rm -f $(BINARY_NAME)
 
 # Target: tidy - Tidies up the go.mod and go.sum files.
 .PHONY: tidy
@@ -86,6 +99,8 @@ help:
 	@echo "  lint-full              - Run golangci-lint with all issues shown."
 	@echo "  test                   - Run unit tests."
 	@echo "  build                  - Build the project."
+	@echo "  binary                 - Build the pkm-sync binary."
+	@echo "  clean                  - Remove the built binary."
 	@echo "  tidy                   - Tidy go modules."
 	@echo "  check-golangci-version - Verify golangci-lint v2.0+ is installed."
 	@echo "  help                   - Show this help message."
