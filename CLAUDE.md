@@ -52,7 +52,6 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - **CoreItem**: Base interface with ID, title, source type
   - **SourcedItem**: Extends CoreItem with source URL and metadata
   - **FullItem**: Composed interface (SourcedItem + TimestampedItem + EnrichedItem + SerializableItem)
-  - **ItemInterface**: Backward-compatible alias for FullItem
   - **BasicItem**: Standard implementation for emails, calendar events, documents
   - **Thread**: Specialized implementation for email threads with embedded messages
 - **Source implementations** in `internal/sources/` (Google Calendar, Gmail, Drive)
@@ -79,7 +78,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 
 ### Data Flow
 1. **Multi-source collection**: Sync engine iterates through enabled sources
-2. **Universal data model**: Each source converts data to common `ItemInterface` format
+2. **Universal data model**: Each source converts data to common `FullItem` format
 3. **Transform pipeline**: Optional processing chain for item modification, filtering, and enhancement
 4. **Source tagging**: Optional tags added to identify data source
 5. **Target export**: Items formatted and exported according to target type
@@ -174,7 +173,7 @@ The transformer pipeline provides a configurable, chainable processing system fo
 - **Segregated interfaces**: `ContentTransformer` for content modification, `MetadataTransformer` for metadata enrichment
 - **TransformPipeline**: Chains multiple transformers with configurable error handling
 - **Configuration-driven**: Enable/disable transformers and configure processing order
-- **Interface-based**: Works seamlessly with ItemInterface system supporting Thread and BasicItem types
+- **Interface-based**: Works seamlessly with FullItem interface supporting Thread and BasicItem types
 
 ### Configuration Example
 ```yaml

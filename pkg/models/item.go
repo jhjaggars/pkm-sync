@@ -59,11 +59,8 @@ type FullItem interface {
 	SerializableItem
 }
 
-// ItemInterface is a backward compatibility alias for FullItem.
-type ItemInterface = FullItem
-
 // Item represents a universal data item from any source.
-// DEPRECATED: Use ItemInterface instead. This struct is maintained for backward compatibility.
+// DEPRECATED: Use FullItem instead. This struct is maintained for backward compatibility.
 type Item struct {
 	ID          string                 `json:"id"`
 	Title       string                 `json:"title"`
@@ -94,7 +91,7 @@ type Link struct {
 	Type  string `json:"type"` // "meeting_url", "document", "external"
 }
 
-// BasicItem implements ItemInterface with the same behavior as the legacy Item struct.
+// BasicItem implements FullItem with the same behavior as the legacy Item struct.
 // This provides a drop-in replacement that maintains backward compatibility.
 type BasicItem struct {
 	ID          string                 `json:"id"`
@@ -115,19 +112,19 @@ type BasicItem struct {
 type Thread struct {
 	*BasicItem // Embed BasicItem for common functionality
 
-	Messages []ItemInterface `json:"messages"` // Individual messages in the thread
+	Messages []FullItem `json:"messages"` // Individual messages in the thread
 }
 
-// Ensure BasicItem implements ItemInterface.
-var _ ItemInterface = (*BasicItem)(nil)
+// Ensure BasicItem implements FullItem.
+var _ FullItem = (*BasicItem)(nil)
 
-// Ensure Thread implements ItemInterface.
-var _ ItemInterface = (*Thread)(nil)
+// Ensure Thread implements FullItem.
+var _ FullItem = (*Thread)(nil)
 
 // Constructor functions
 
 // NewBasicItem creates a new BasicItem with the specified ID and title.
-func NewBasicItem(id, title string) ItemInterface {
+func NewBasicItem(id, title string) FullItem {
 	return &BasicItem{
 		ID:          id,
 		Title:       title,
@@ -154,7 +151,7 @@ func NewThread(id, threadSubject string) *Thread {
 			Metadata:    make(map[string]interface{}),
 			Links:       make([]Link, 0),
 		},
-		Messages: make([]ItemInterface, 0),
+		Messages: make([]FullItem, 0),
 	}
 }
 
@@ -244,9 +241,9 @@ func (b *BasicItem) SetLinks(links []Link) { b.Links = links }
 
 // Thread-specific methods
 
-func (t *Thread) GetMessages() []ItemInterface         { return t.Messages }
-func (t *Thread) SetMessages(messages []ItemInterface) { t.Messages = messages }
-func (t *Thread) AddMessage(message ItemInterface)     { t.Messages = append(t.Messages, message) }
+func (t *Thread) GetMessages() []FullItem         { return t.Messages }
+func (t *Thread) SetMessages(messages []FullItem) { t.Messages = messages }
+func (t *Thread) AddMessage(message FullItem)     { t.Messages = append(t.Messages, message) }
 
 // MarshalJSON implements custom JSON serialization for BasicItem.
 func (b *BasicItem) MarshalJSON() ([]byte, error) {
@@ -278,7 +275,7 @@ func (t *Thread) MarshalJSON() ([]byte, error) {
 		Attachments []Attachment           `json:"attachments"`
 		Metadata    map[string]interface{} `json:"metadata"`
 		Links       []Link                 `json:"links"`
-		Messages    []ItemInterface        `json:"messages"`
+		Messages    []FullItem             `json:"messages"`
 	}
 
 	return json.Marshal(ThreadJSON{
@@ -339,7 +336,7 @@ func (t *Thread) UnmarshalJSON(data []byte) error {
 
 	// Unmarshal messages - for now, unmarshal as BasicItems
 	// In the future, this could be enhanced to detect and unmarshal different types
-	t.Messages = make([]ItemInterface, len(temp.Messages))
+	t.Messages = make([]FullItem, len(temp.Messages))
 
 	for i, rawMsg := range temp.Messages {
 		var msg BasicItem
@@ -355,8 +352,8 @@ func (t *Thread) UnmarshalJSON(data []byte) error {
 
 // Type assertion helpers for migration and backward compatibility
 
-// AsBasicItem safely converts an ItemInterface to *BasicItem.
-func AsBasicItem(item ItemInterface) (*BasicItem, bool) {
+// AsBasicItem safely converts a FullItem to *BasicItem.
+func AsBasicItem(item FullItem) (*BasicItem, bool) {
 	if basicItem, ok := item.(*BasicItem); ok {
 		return basicItem, true
 	}
@@ -364,8 +361,8 @@ func AsBasicItem(item ItemInterface) (*BasicItem, bool) {
 	return nil, false
 }
 
-// AsThread safely converts an ItemInterface to *Thread.
-func AsThread(item ItemInterface) (*Thread, bool) {
+// AsThread safely converts a FullItem to *Thread.
+func AsThread(item FullItem) (*Thread, bool) {
 	if thread, ok := item.(*Thread); ok {
 		return thread, true
 	}
@@ -373,17 +370,17 @@ func AsThread(item ItemInterface) (*Thread, bool) {
 	return nil, false
 }
 
-// IsThread checks if an ItemInterface is a Thread.
-func IsThread(item ItemInterface) bool {
+// IsThread checks if a FullItem is a Thread.
+func IsThread(item FullItem) bool {
 	_, ok := item.(*Thread)
 
 	return ok
 }
 
-// Conversion functions for compatibility between ItemInterface and Item struct
+// Conversion functions for compatibility between FullItem and Item struct
 
-// AsItemStruct converts any ItemInterface to the Item struct for compatibility purposes.
-func AsItemStruct(item ItemInterface) *Item {
+// AsItemStruct converts any FullItem to the Item struct for compatibility purposes.
+func AsItemStruct(item FullItem) *Item {
 	return &Item{
 		ID:          item.GetID(),
 		Title:       item.GetTitle(),
@@ -399,8 +396,8 @@ func AsItemStruct(item ItemInterface) *Item {
 	}
 }
 
-// AsItemInterface converts an Item struct to ItemInterface (as BasicItem).
-func AsItemInterface(item *Item) ItemInterface {
+// AsFullItem converts an Item struct to FullItem (as BasicItem).
+func AsFullItem(item *Item) FullItem {
 	return &BasicItem{
 		ID:          item.ID,
 		Title:       item.Title,

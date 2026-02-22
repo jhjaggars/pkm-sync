@@ -144,20 +144,20 @@ func TestSignatureRemovalTransformer_Transform(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		items    []models.ItemInterface
-		expected []models.ItemInterface
+		items    []models.FullItem
+		expected []models.FullItem
 	}{
 		{
 			name: "Remove signature from email",
-			items: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			items: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "1",
 					Title:   "Test Email",
 					Content: "Email content.\n\n--\nBest regards,\nJohn",
 				}),
 			},
-			expected: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			expected: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "1",
 					Title:   "Test Email",
 					Content: "Email content.",
@@ -166,15 +166,15 @@ func TestSignatureRemovalTransformer_Transform(t *testing.T) {
 		},
 		{
 			name: "No signature to remove",
-			items: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			items: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "2",
 					Title:   "Clean Email",
 					Content: "Clean email content without signature.",
 				}),
 			},
-			expected: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			expected: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "2",
 					Title:   "Clean Email",
 					Content: "Clean email content without signature.",
@@ -183,25 +183,25 @@ func TestSignatureRemovalTransformer_Transform(t *testing.T) {
 		},
 		{
 			name: "Multiple items with mixed signatures",
-			items: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			items: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "3",
 					Title:   "Email 1",
 					Content: "Content 1\n\nBest regards,\nSender",
 				}),
-				models.AsItemInterface(&models.Item{
+				models.AsFullItem(&models.Item{
 					ID:      "4",
 					Title:   "Email 2",
 					Content: "Content 2 without signature",
 				}),
 			},
-			expected: []models.ItemInterface{
-				models.AsItemInterface(&models.Item{
+			expected: []models.FullItem{
+				models.AsFullItem(&models.Item{
 					ID:      "3",
 					Title:   "Email 1",
 					Content: "Content 1",
 				}),
-				models.AsItemInterface(&models.Item{
+				models.AsFullItem(&models.Item{
 					ID:      "4",
 					Title:   "Email 2",
 					Content: "Content 2 without signature",

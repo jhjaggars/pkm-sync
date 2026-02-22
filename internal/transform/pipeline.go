@@ -8,14 +8,14 @@ import (
 	"pkm-sync/pkg/models"
 )
 
-// DefaultTransformPipeline implements the TransformPipeline interface using ItemInterface.
+// DefaultTransformPipeline implements the TransformPipeline interface using FullItem.
 type DefaultTransformPipeline struct {
 	transformers        []interfaces.Transformer
 	config              models.TransformConfig
 	transformerRegistry map[string]interfaces.Transformer
 }
 
-// NewPipeline creates a new transform pipeline using ItemInterface.
+// NewPipeline creates a new transform pipeline using FullItem.
 func NewPipeline() *DefaultTransformPipeline {
 	return &DefaultTransformPipeline{
 		transformers:        make([]interfaces.Transformer, 0),

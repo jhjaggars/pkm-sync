@@ -14,8 +14,8 @@ func TestContentCleanupTransformer(t *testing.T) {
 		t.Errorf("Expected name 'content_cleanup', got '%s'", transformer.Name())
 	}
 
-	items := []models.ItemInterface{
-		func() models.ItemInterface {
+	items := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "  Re: Test Subject  ")
 			item.SetContent("  Test content\n\n\n\nwith extra newlines\r\n  ")
 
@@ -86,8 +86,8 @@ func TestAutoTaggingTransformer(t *testing.T) {
 		t.Fatalf("Configure failed: %v", err)
 	}
 
-	items := []models.ItemInterface{
-		func() models.ItemInterface {
+	items := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "Urgent meeting tomorrow")
 			item.SetContent("Important meeting discussion")
 			item.SetSourceType("gmail")
@@ -125,8 +125,8 @@ func TestAutoTaggingTransformer(t *testing.T) {
 func TestAutoTaggingTransformerNoDuplicates(t *testing.T) {
 	transformer := NewAutoTaggingTransformer()
 
-	items := []models.ItemInterface{
-		func() models.ItemInterface {
+	items := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "Test")
 			item.SetContent("Test content")
 			item.SetSourceType("gmail")
@@ -176,8 +176,8 @@ func TestFilterTransformer(t *testing.T) {
 		t.Fatalf("Configure failed: %v", err)
 	}
 
-	items := []models.ItemInterface{
-		func() models.ItemInterface {
+	items := []models.FullItem{
+		func() models.FullItem {
 			item := models.NewBasicItem("1", "Valid item")
 			item.SetContent("This content is long enough")
 			item.SetSourceType("gmail")
@@ -185,7 +185,7 @@ func TestFilterTransformer(t *testing.T) {
 
 			return item
 		}(),
-		func() models.ItemInterface {
+		func() models.FullItem {
 			item := models.NewBasicItem("2", "Too short")
 			item.SetContent("Short")
 			item.SetSourceType("gmail")
@@ -193,7 +193,7 @@ func TestFilterTransformer(t *testing.T) {
 
 			return item
 		}(),
-		func() models.ItemInterface {
+		func() models.FullItem {
 			item := models.NewBasicItem("3", "Spam item")
 			item.SetContent("This content is long enough")
 			item.SetSourceType("spam")
@@ -201,7 +201,7 @@ func TestFilterTransformer(t *testing.T) {
 
 			return item
 		}(),
-		func() models.ItemInterface {
+		func() models.FullItem {
 			item := models.NewBasicItem("4", "Missing tag")
 			item.SetContent("This content is long enough")
 			item.SetSourceType("gmail")
@@ -229,8 +229,8 @@ func TestFilterTransformerNoFilters(t *testing.T) {
 	transformer := NewFilterTransformer()
 	transformer.Configure(make(map[string]interface{}))
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(createTestItemExample("1", "Test", "Content")),
+	items := []models.FullItem{
+		models.AsFullItem(createTestItemExample("1", "Test", "Content")),
 	}
 
 	result, err := transformer.Transform(items)
@@ -250,8 +250,8 @@ func TestFilterTransformerInvalidConfig(t *testing.T) {
 	}
 	transformer.Configure(config)
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(createTestItemExample("1", "Test", "Content")),
+	items := []models.FullItem{
+		models.AsFullItem(createTestItemExample("1", "Test", "Content")),
 	}
 
 	_, err := transformer.Transform(items)
@@ -261,9 +261,10 @@ func TestFilterTransformerInvalidConfig(t *testing.T) {
 }
 
 func TestGetAllExampleTransformers(t *testing.T) {
+	// GetAllExampleTransformers now returns all 6 transformers (same as GetAllContentProcessingTransformers).
 	transformers := GetAllExampleTransformers()
-	if len(transformers) != 2 {
-		t.Errorf("Expected 2 example transformers, got %d", len(transformers))
+	if len(transformers) != 6 {
+		t.Errorf("Expected 6 transformers, got %d", len(transformers))
 	}
 }
 

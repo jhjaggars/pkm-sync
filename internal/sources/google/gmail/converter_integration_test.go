@@ -46,7 +46,7 @@ func TestFromGmailMessage_HTMLWithLinks(t *testing.T) {
 	err = linkTransformer.Configure(map[string]interface{}{"enabled": true})
 	require.NoError(t, err)
 
-	transformedItems, err := linkTransformer.Transform([]models.ItemInterface{models.AsItemInterface(item)})
+	transformedItems, err := linkTransformer.Transform([]models.FullItem{models.AsFullItem(item)})
 	require.NoError(t, err)
 	require.Len(t, transformedItems, 1)
 
@@ -136,7 +136,7 @@ func TestFromGmailMessage_QuotedReply(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	transformedItems, err := cleanupTransformer.Transform([]models.ItemInterface{models.AsItemInterface(item)})
+	transformedItems, err := cleanupTransformer.Transform([]models.FullItem{models.AsFullItem(item)})
 	require.NoError(t, err)
 	require.Len(t, transformedItems, 1)
 

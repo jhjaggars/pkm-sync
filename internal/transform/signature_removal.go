@@ -60,7 +60,7 @@ func (t *SignatureRemovalTransformer) Transform(items []models.FullItem) ([]mode
 
 		if cleanedContent != item.GetContent() {
 			// Create a new item copy (preserving type)
-			var newItem models.ItemInterface
+			var newItem models.FullItem
 
 			if thread, isThread := models.AsThread(item); isThread {
 				newThread := models.NewThread(thread.GetID(), thread.GetTitle())

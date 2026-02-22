@@ -137,7 +137,7 @@ func (g *GoogleSource) configureCalendarService(config map[string]interface{}) {
 	}
 }
 
-func (g *GoogleSource) Fetch(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (g *GoogleSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) {
 	if g.config.Type == SourceTypeGmail {
 		return g.fetchGmail(since, limit)
 	}
@@ -146,7 +146,7 @@ func (g *GoogleSource) Fetch(since time.Time, limit int) ([]models.ItemInterface
 	return g.fetchCalendar(since, limit)
 }
 
-func (g *GoogleSource) fetchGmail(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (g *GoogleSource) fetchGmail(since time.Time, limit int) ([]models.FullItem, error) {
 	if g.gmailService == nil {
 		return nil, fmt.Errorf("gmail service not initialized")
 	}
@@ -160,13 +160,13 @@ func (g *GoogleSource) fetchGmail(since time.Time, limit int) ([]models.ItemInte
 }
 
 // fetchGmailMessages fetches individual messages using the Messages API.
-func (g *GoogleSource) fetchGmailMessages(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (g *GoogleSource) fetchGmailMessages(since time.Time, limit int) ([]models.FullItem, error) {
 	messages, err := g.gmailService.GetMessages(since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch Gmail messages: %w", err)
 	}
 
-	items := make([]models.ItemInterface, 0, len(messages))
+	items := make([]models.FullItem, 0, len(messages))
 
 	for _, message := range messages {
 		legacyItem, err := gmail.FromGmailMessageWithService(message, g.config.Gmail, g.gmailService)
@@ -174,20 +174,20 @@ func (g *GoogleSource) fetchGmailMessages(since time.Time, limit int) ([]models.
 			return nil, fmt.Errorf("failed to convert Gmail message to item: %w", err)
 		}
 
-		items = append(items, models.AsItemInterface(legacyItem))
+		items = append(items, models.AsFullItem(legacyItem))
 	}
 
 	return items, nil
 }
 
 // fetchGmailThreads fetches complete threads using the Threads API.
-func (g *GoogleSource) fetchGmailThreads(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (g *GoogleSource) fetchGmailThreads(since time.Time, limit int) ([]models.FullItem, error) {
 	threads, err := g.gmailService.GetThreads(since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch Gmail threads: %w", err)
 	}
 
-	items := make([]models.ItemInterface, 0, len(threads))
+	items := make([]models.FullItem, 0, len(threads))
 
 	for _, thread := range threads {
 		legacyItem, err := gmail.FromGmailThread(thread, g.config.Gmail, g.gmailService)
@@ -195,13 +195,13 @@ func (g *GoogleSource) fetchGmailThreads(since time.Time, limit int) ([]models.I
 			return nil, fmt.Errorf("failed to convert Gmail thread to item: %w", err)
 		}
 
-		items = append(items, models.AsItemInterface(legacyItem))
+		items = append(items, models.AsFullItem(legacyItem))
 	}
 
 	return items, nil
 }
 
-func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.FullItem, error) {
 	if g.calendarService == nil {
 		return nil, fmt.Errorf("calendar service not initialized")
 	}
@@ -211,13 +211,13 @@ func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.ItemI
 		return nil, fmt.Errorf("failed to fetch calendar events: %w", err)
 	}
 
-	items := make([]models.ItemInterface, 0, len(events))
+	items := make([]models.FullItem, 0, len(events))
 
 	for _, event := range events {
 		// Convert API event to model, then to legacy item, then to interface
 		calEvent := g.calendarService.ConvertToModelWithDrive(event)
 		legacyItem := models.FromCalendarEvent(calEvent)
-		item := models.AsItemInterface(legacyItem)
+		item := models.AsFullItem(legacyItem)
 		items = append(items, item)
 	}
 

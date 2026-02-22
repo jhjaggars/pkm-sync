@@ -12,7 +12,7 @@ import (
 
 // MockSource is a mock implementation of the Source interface for testing.
 type MockSource struct {
-	itemsToReturn []models.ItemInterface
+	itemsToReturn []models.FullItem
 }
 
 func (m *MockSource) Name() string {
@@ -23,7 +23,7 @@ func (m *MockSource) Configure(config map[string]interface{}, client *http.Clien
 	return nil
 }
 
-func (m *MockSource) Fetch(since time.Time, limit int) ([]models.ItemInterface, error) {
+func (m *MockSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) {
 	return m.itemsToReturn, nil
 }
 
@@ -33,7 +33,7 @@ func (m *MockSource) SupportsRealtime() bool {
 
 // MockTarget is a mock implementation of the Target interface for testing.
 type MockTarget struct {
-	exportedItems []models.ItemInterface
+	exportedItems []models.FullItem
 }
 
 func (m *MockTarget) Name() string {
@@ -44,7 +44,7 @@ func (m *MockTarget) Configure(config map[string]interface{}) error {
 	return nil
 }
 
-func (m *MockTarget) Export(items []models.ItemInterface, outputDir string) error {
+func (m *MockTarget) Export(items []models.FullItem, outputDir string) error {
 	m.exportedItems = items
 
 	return nil
@@ -62,16 +62,16 @@ func (m *MockTarget) FormatMetadata(metadata map[string]interface{}) string {
 	return ""
 }
 
-func (m *MockTarget) Preview(items []models.ItemInterface, outputDir string) ([]*interfaces.FilePreview, error) {
+func (m *MockTarget) Preview(items []models.FullItem, outputDir string) ([]*interfaces.FilePreview, error) {
 	return nil, nil
 }
 
 func TestSyncerWithTransformerPipeline(t *testing.T) {
 	// Create a mock source that returns two items
 	source := &MockSource{
-		itemsToReturn: []models.ItemInterface{
-			models.AsItemInterface(&models.Item{ID: "1", Title: "Item 1", Content: "short"}),
-			models.AsItemInterface(&models.Item{ID: "2", Title: "Item 2", Content: "this is a long content"}),
+		itemsToReturn: []models.FullItem{
+			models.AsFullItem(&models.Item{ID: "1", Title: "Item 1", Content: "short"}),
+			models.AsFullItem(&models.Item{ID: "2", Title: "Item 2", Content: "this is a long content"}),
 		},
 	}
 

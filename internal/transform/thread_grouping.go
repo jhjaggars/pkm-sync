@@ -88,10 +88,10 @@ func (t *ThreadGroupingTransformer) Transform(items []models.FullItem) ([]models
 		return nil, fmt.Errorf("unknown thread mode: %s (supported: individual, consolidated, summary)", mode)
 	}
 
-	// Convert back to ItemInterface
+	// Convert back to FullItem
 	result := make([]models.FullItem, len(resultLegacyItems))
 	for i, item := range resultLegacyItems {
-		result[i] = models.AsItemInterface(item)
+		result[i] = models.AsFullItem(item)
 	}
 
 	return result, nil

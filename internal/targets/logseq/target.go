@@ -59,7 +59,7 @@ func (l *LogseqTarget) exportItem(item models.FullItem, outputDir string) error 
 	return os.WriteFile(filePath, []byte(content), 0644)
 }
 
-func (l *LogseqTarget) formatContent(item models.ItemInterface) string {
+func (l *LogseqTarget) formatContent(item models.FullItem) string {
 	var sb strings.Builder
 
 	// Properties block (Logseq-specific)

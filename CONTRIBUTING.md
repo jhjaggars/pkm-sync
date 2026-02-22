@@ -111,7 +111,7 @@ The pre-commit hook automatically ensures code quality by running the full CI pi
 ## Architecture Guidelines
 
 ### Universal Interface Pattern
-- Use `ItemInterface` for all data model interactions
+- Use `FullItem` for all data model interactions
 - Implement `BasicItem` for standard items, `Thread` for email threads
 - Follow existing patterns in `pkg/interfaces/` and `pkg/models/`
 

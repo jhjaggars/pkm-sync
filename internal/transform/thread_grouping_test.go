@@ -43,9 +43,9 @@ func TestThreadGroupingTransformer_Transform_Disabled(t *testing.T) {
 		t.Fatalf("Failed to configure: %v", err)
 	}
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Item 1", Content: "Content 1"}),
-		models.AsItemInterface(&models.Item{ID: "2", Title: "Item 2", Content: "Content 2"}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Item 1", Content: "Content 1"}),
+		models.AsFullItem(&models.Item{ID: "2", Title: "Item 2", Content: "Content 2"}),
 	}
 
 	result, err := transformer.Transform(items)
@@ -78,9 +78,9 @@ func TestThreadGroupingTransformer_Transform_Individual(t *testing.T) {
 		t.Fatalf("Failed to configure: %v", err)
 	}
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{ID: "1", Title: "Item 1", Content: "Content 1"}),
-		models.AsItemInterface(&models.Item{ID: "2", Title: "Item 2", Content: "Content 2"}),
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{ID: "1", Title: "Item 1", Content: "Content 1"}),
+		models.AsFullItem(&models.Item{ID: "2", Title: "Item 2", Content: "Content 2"}),
 	}
 
 	result, err := transformer.Transform(items)
@@ -110,8 +110,8 @@ func TestThreadGroupingTransformer_Transform_Consolidated(t *testing.T) {
 	now := time.Now()
 	threadID := "thread123"
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{
 			ID:        "1",
 			Title:     "Re: Project Discussion",
 			Content:   "First message",
@@ -121,7 +121,7 @@ func TestThreadGroupingTransformer_Transform_Consolidated(t *testing.T) {
 				"from":      "alice@example.com",
 			},
 		}),
-		models.AsItemInterface(&models.Item{
+		models.AsFullItem(&models.Item{
 			ID:        "2",
 			Title:     "Re: Project Discussion",
 			Content:   "Second message",
@@ -131,7 +131,7 @@ func TestThreadGroupingTransformer_Transform_Consolidated(t *testing.T) {
 				"from":      "bob@example.com",
 			},
 		}),
-		models.AsItemInterface(&models.Item{
+		models.AsFullItem(&models.Item{
 			ID:        "3",
 			Title:     "Separate Item",
 			Content:   "Individual message",
@@ -192,8 +192,8 @@ func TestThreadGroupingTransformer_Transform_Summary(t *testing.T) {
 	now := time.Now()
 	threadID := "thread456"
 
-	items := []models.ItemInterface{
-		models.AsItemInterface(&models.Item{
+	items := []models.FullItem{
+		models.AsFullItem(&models.Item{
 			ID:        "1",
 			Title:     "Project Discussion",
 			Content:   "First message with lots of content to make it important",
@@ -203,7 +203,7 @@ func TestThreadGroupingTransformer_Transform_Summary(t *testing.T) {
 				"from":      "alice@example.com",
 			},
 		}),
-		models.AsItemInterface(&models.Item{
+		models.AsFullItem(&models.Item{
 			ID:        "2",
 			Title:     "Re: Project Discussion",
 			Content:   "Short reply",
@@ -213,7 +213,7 @@ func TestThreadGroupingTransformer_Transform_Summary(t *testing.T) {
 				"from":      "bob@example.com",
 			},
 		}),
-		models.AsItemInterface(&models.Item{
+		models.AsFullItem(&models.Item{
 			ID:        "3",
 			Title:     "Re: Project Discussion",
 			Content:   "Final message",
@@ -572,7 +572,7 @@ func TestThreadGroupingTransformer_ErrorHandling(t *testing.T) {
 		t.Fatalf("Failed to configure: %v", err)
 	}
 
-	items := []models.ItemInterface{models.AsItemInterface(&models.Item{ID: "1", Title: "Test"})}
+	items := []models.FullItem{models.AsFullItem(&models.Item{ID: "1", Title: "Test"})}
 
 	_, err = transformer.Transform(items)
 	if err == nil {
