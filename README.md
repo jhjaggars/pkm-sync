@@ -1,388 +1,313 @@
 # pkm-sync
 
-A universal synchronization tool for Personal Knowledge Management (PKM) systems. Connect data sources like Google Calendar, Gmail, and Drive to PKM tools like Obsidian and Logseq.
+A universal synchronization tool for Personal Knowledge Management (PKM) systems. Connect Google Calendar, Gmail, and Drive to Obsidian or Logseq.
 
 ## Quick Start
 
-### Install
 ```bash
+# 1. Build
 go build -o pkm-sync ./cmd
+
+# 2. Place your Google OAuth credentials
+cp credentials.json ~/.config/pkm-sync/credentials.json
+
+# 3. Create a config file and verify authentication
+pkm-sync config init
+pkm-sync setup
+
+# 4. Sync everything
+pkm-sync sync
 ```
 
-### Basic Usage
-```bash
-# Quick start with configuration file (recommended)
-pkm-sync config init                    # Create default config
-pkm-sync gmail                          # Sync Gmail emails
-pkm-sync calendar                       # Sync calendar events
-pkm-sync drive                          # Export Google Drive documents
+See [Authentication Setup](#authentication-setup) for OAuth credential creation steps.
 
-# Manual sync with flags (classic approach)
-pkm-sync gmail --source gmail_work --target obsidian --output ./vault
-pkm-sync calendar --start 2025-01-01 --end 2025-01-31
-pkm-sync drive --event-id 12345 --output ./docs
+## How It Works
 
-# Multi-source sync (with configuration)
-pkm-sync config init --source gmail_work --source gmail_personal
-pkm-sync gmail                          # Syncs from all enabled Gmail sources
+pkm-sync uses a **Sources → Transformers → Sinks** pipeline:
 
-# Sync to Logseq  
-pkm-sync gmail --target logseq --output ./graph
-pkm-sync calendar --target logseq --output ./graph
+1. **Sources** fetch items from Gmail, Google Calendar, or Google Drive
+2. **Transformers** clean content (HTML→Markdown, strip signatures, auto-tag, filter)
+3. **Sinks** write items to a PKM target (Obsidian/Logseq files) or a vector database
+
+```
+Gmail ──┐
+Drive ──┼──► Transformers ──► FileSink (Obsidian / Logseq)
+Drive ──┘                 └──► VectorSink (semantic search)
 ```
 
-### Configuration
-For OAuth,  place `credentials.json` in:
-- **Linux/Unix**: `~/.config/pkm-sync/credentials.json`
-- **macOS**: `~/.config/pkm-sync/credentials.json`
-- **Windows**: `%APPDATA%\pkm-sync\credentials.json`
+The primary entry point is `pkm-sync sync`, which runs all enabled sources through the full pipeline in one shot.
 
-## Supported Integrations
+## Configuration
 
-### Sources
-- ✅ **Gmail** - Fully implemented with multi-instance support and thread grouping
-- ✅ **Google Calendar** - Fully implemented
-- ✅ **Google Drive** - Fully implemented for document export
-- 📋 **Slack** - Configuration ready, implementation pending
-- 📋 **Jira** - Configuration ready, implementation pending
-
-### Targets  
-- ✅ **Obsidian** - YAML frontmatter, hierarchical structure
-- ✅ **Logseq** - Property blocks, flat structure
-
-### Multi-Source Features
-- ✅ **Simultaneous sync** from multiple sources
-- ✅ **Source-specific tags** for data provenance
-- ✅ **Priority-based sync order** (configurable)
-- ✅ **Individual source scheduling** (different intervals)
-- ✅ **Graceful error handling** (continues if one source fails)
-
-## Examples
-
-### Gmail Sync Examples
 ```bash
-# Sync work emails to Obsidian with thread grouping
-pkm-sync gmail --source gmail_work --target obsidian --output ./vault
-
-# Sync personal emails to Logseq
-pkm-sync gmail --source gmail_personal --target logseq --since 7d
-
-# Dry run to see what would be synced (includes thread grouping preview)
-pkm-sync gmail --source gmail_work --dry-run
-
-# Example output with thread grouping:
-# "Found 62 emails from gmail_direct" → "Found 25 emails from gmail_direct"
-# Creates files like: Thread-Summary_project-discussion_8-messages.md
+pkm-sync config init      # Write default config to ~/.config/pkm-sync/config.yaml
+pkm-sync config show      # Print current effective config
+pkm-sync config path      # Show config file location
+pkm-sync config edit      # Open config in $EDITOR
+pkm-sync config validate  # Validate config file
 ```
 
-### Calendar Sync Examples
-```bash
-# Sync last week's calendar to Obsidian
-pkm-sync calendar --start 2025-01-01 --end 2025-01-31 --target obsidian
+Config is loaded from the first location that exists:
+1. `--config-dir` flag
+2. `~/.config/pkm-sync/config.yaml`
+3. `./config.yaml` (current directory)
 
-# List today's events
-pkm-sync calendar --start today --end today
+### Minimal config example
 
-# Export calendar with details
-pkm-sync calendar --include-details --format json
-```
-
-### Drive Export Examples
-```bash
-# Export docs from specific event
-pkm-sync drive --event-id 12345 --output ./docs
-
-# Export docs from date range
-pkm-sync drive --start 2025-01-01 --end 2025-01-31 --output ./docs
-```
-
-### Multi-Source Configuration Examples
-```bash
-# Configure multiple Gmail sources
-pkm-sync config init --source gmail_work --source gmail_personal
-pkm-sync gmail  # Syncs from all enabled Gmail sources
-
-# This will output: "Syncing Gmail from sources [gmail_work, gmail_personal] to obsidian"
-```
-
-### Single Source Examples  
-```bash
-# Sync last week's calendar to Logseq
-pkm-sync calendar --start 2025-01-01 --end 2025-01-31 --target logseq --output ~/Documents/Logseq
-
-# Dry run to see what would be synced from all enabled sources
-pkm-sync gmail --dry-run
-
-# Dry run for specific source only
-pkm-sync gmail --source gmail_work --target obsidian --dry-run
-
-# Custom output location
-pkm-sync gmail --output ~/MyVault/Calendar
-```
-
-### Configuration-First Workflow
-```bash
-# Global configuration (persistent across all projects)
-pkm-sync config init --target obsidian --output ~/MyVault
-pkm-sync config show    # Verify settings
-
-# OR: Local repository configuration (project-specific)
-cat > config.yaml << EOF
+```yaml
 sync:
-  enabled_sources: ["google_calendar"]
+  enabled_sources: ["gmail_work", "my_drive"]
   default_target: obsidian
-  default_output_dir: ./vault
+  default_output_dir: ~/vault
+  default_since: 7d
+
+sources:
+  gmail_work:
+    enabled: true
+    type: gmail
+    gmail:
+      query: "in:inbox to:me"
+      include_threads: true
+      thread_mode: "summary"   # individual | consolidated | summary
+
+  my_drive:
+    enabled: true
+    type: google_drive
+    drive:
+      folder_ids: ["<folder-id>"]
+      workspace_types: ["document", "spreadsheet"]
+
 targets:
   obsidian:
     type: obsidian
     obsidian:
-      default_folder: Calendar
-EOF
-
-# Then use specific commands
-pkm-sync gmail           # Sync Gmail emails
-pkm-sync calendar        # Sync calendar events
-pkm-sync drive           # Export Google Drive documents
-pkm-sync gmail --since today  # Override just the time range
+      default_folder: Inbox
+      include_frontmatter: true
 ```
+
+See **[CONFIGURATION.md](./CONFIGURATION.md)** for all available options.
+
+## Commands
+
+### `sync` — primary pipeline command
+
+Sync all enabled sources in one operation.
+
+```bash
+pkm-sync sync                              # Sync all enabled sources
+pkm-sync sync --source gmail_work          # Limit to one source
+pkm-sync sync --target logseq --output ~/graph
+pkm-sync sync --since 7d --dry-run         # Preview without writing
+pkm-sync sync --since 7d --dry-run --format json
+```
+
+Flags: `--source`, `--target`, `--output/-o`, `--since`, `--dry-run`, `--limit` (default 1000), `--format` (summary|json)
+
+---
+
+### `gmail` — Gmail-only sync
+
+Same pipeline as `sync`, filtered to Gmail sources.
+
+```bash
+pkm-sync gmail                                    # All enabled Gmail sources
+pkm-sync gmail --source gmail_work --since today
+pkm-sync gmail --dry-run
+```
+
+Flags: same as `sync`
+
+---
+
+### `drive` — Google Drive sync
+
+Same pipeline as `sync`, filtered to `google_drive` sources.
+
+```bash
+pkm-sync drive                                    # All enabled Drive sources
+pkm-sync drive --source my_drive --since 7d
+pkm-sync drive --dry-run --format json
+```
+
+Flags: same as `sync` (default `--limit` is 100)
+
+#### `drive fetch <URL>` — fetch a single doc to stdout
+
+```bash
+pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit"
+pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md
+pkm-sync drive fetch "https://docs.google.com/spreadsheets/d/xyz789/edit" --format csv
+```
+
+Formats: `txt` (default), `md`, `html`, `csv` (spreadsheets only)
+
+---
+
+### `calendar` — event viewer
+
+Standalone command; **not** part of the sync pipeline. Displays calendar events as a table or JSON.
+
+```bash
+pkm-sync calendar                                     # Current week to today
+pkm-sync calendar --start today
+pkm-sync calendar --start 2025-01-01 --end 2025-01-31
+pkm-sync calendar --format json
+pkm-sync calendar --include-details                   # Attendees, meeting URLs
+pkm-sync calendar --export-docs --export-dir ./docs   # Export attached Docs
+```
+
+Flags: `--start/-s`, `--end/-e`, `--format/-f` (table|json), `--include-details`, `--export-docs`, `--export-dir`, `--max-results/-n`
+
+---
+
+### `index` — index into vector DB for semantic search
+
+Index Gmail threads into a local SQLite vector database (requires Ollama or compatible embedding provider).
+
+```bash
+pkm-sync index --source gmail_work --since 30d
+pkm-sync index --since 7d --limit 500
+pkm-sync index --reindex            # Re-index all threads
+```
+
+Flags: `--source`, `--since` (default 30d), `--limit` (default 1000), `--reindex`, `--delay` (ms between embeddings), `--max-content-length`
+
+---
+
+### `search <query>` — semantic search
+
+Query the vector database built by `index`.
+
+```bash
+pkm-sync search "kubernetes deployment issues"
+pkm-sync search "meetings with alice" --limit 5
+pkm-sync search "project status" --source-name gmail_work --format json
+```
+
+Flags: `--limit` (default 10), `--source-name`, `--source-type`, `--format` (text|json), `--min-score`
+
+---
+
+### `setup` — verify authentication
+
+```bash
+pkm-sync setup
+```
+
+Tests connectivity to Google Calendar, Drive, and Gmail. Provides clear error messages if anything is misconfigured.
+
+---
+
+### Global flags
+
+```
+--credentials/-c   Path to credentials.json
+--config-dir       Custom config directory
+--debug/-d         Enable debug logging
+--start/-s         Global start date (used by calendar)
+--end/-e           Global end date (used by calendar)
+```
+
+## Supported Integrations
+
+| Source | Status |
+|--------|--------|
+| Gmail | Fully implemented — multi-instance, thread grouping |
+| Google Calendar | Fully implemented |
+| Google Drive | Fully implemented — Docs, Sheets, Slides |
+| Slack | Planned |
+| Jira | Planned |
+
+| Target | Format |
+|--------|--------|
+| Obsidian | YAML frontmatter, hierarchical folders, standard Markdown |
+| Logseq | Property blocks, flat structure, `[[date]]` links, `#tags` |
 
 ## Authentication Setup
 
 ### Prerequisites
 
-1. Go 1.24.4 or later
-2. A Google Cloud project that you control
-3. Access to enable APIs in your Google Cloud project
+- Go 1.24.4 or later
+- A Google Cloud project with API access
 
 ### OAuth 2.0 Setup
 
-This application uses OAuth 2.0 for Google API authentication:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
+2. Create or select a project
+3. Enable **Google Calendar API**, **Google Drive API**, and **Gmail API**
+4. Configure the OAuth consent screen (Internal or External)
+5. Create **OAuth 2.0 Client ID** credentials → Desktop application
+6. Add `http://127.0.0.1:*` to authorized redirect URIs
+7. Download `credentials.json`
 
-1. **Create OAuth 2.0 credentials**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select an existing one
-   - Enable the Google Calendar API and Google Drive API
-   - Configure the OAuth consent screen
-   - Create OAuth 2.0 Client ID credentials for a "Desktop application"
-   - Add `http://127.0.0.1:*` to the authorized redirect URIs (enables automatic authorization)
-   - Download the credentials file
+### Place credentials
 
-2. **Place credentials file**:
-   
-   **Default locations (checked in order)**:
-   - **Linux/Unix**: `~/.config/pkm-sync/credentials.json`
-   - **macOS**: `~/.config/pkm-sync/credentials.json` OR `~/Library/Application Support/pkm-sync/credentials.json`
-   - **Windows**: `%APPDATA%\pkm-sync\credentials.json`
-   - **Fallback**: `./credentials.json` (current directory)
+Default locations (checked in order):
+- `~/.config/pkm-sync/credentials.json`
+- `~/Library/Application Support/pkm-sync/credentials.json` (macOS)
+- `%APPDATA%\pkm-sync\credentials.json` (Windows)
+- `./credentials.json` (current directory)
 
-3. **Verify setup**:
-   ```bash
-   pkm-sync setup
-   ```
+Or use a flag: `pkm-sync --credentials /path/to/credentials.json setup`
 
-4. **Custom credential location** (optional):
-   ```bash
-   pkm-sync --credentials /path/to/credentials.json setup
-   pkm-sync --config-dir /custom/config/dir setup
-   ```
+### First run
 
-The application will automatically open your browser for authorization and handle the OAuth flow automatically. Your authorization token is saved in the same config directory. If the automatic flow fails, it falls back to manual copy/paste mode.
-
-## Configuration
-
-pkm-sync supports comprehensive configuration through YAML files. See **[CONFIGURATION.md](./CONFIGURATION.md)** for complete configuration documentation.
-
-### Quick Start
 ```bash
-# Create default config file
-pkm-sync config init
-
-# View current configuration
-pkm-sync config show
-
-# Edit configuration
-pkm-sync config edit
-
-# Validate configuration
-pkm-sync config validate
+pkm-sync setup
 ```
 
-### Configuration Files
-pkm-sync looks for configuration files in this order:
-1. Custom directory (`--config-dir` flag)
-2. **Global config**: `~/.config/pkm-sync/config.yaml`
-3. **Local repository**: `./config.yaml` (current directory)
-
-### Example Configuration
-```yaml
-sync:
-  enabled_sources: ["google_calendar"]
-  default_target: obsidian
-  default_output_dir: ./vault
-
-sources:
-  google_calendar:
-    enabled: true
-    type: google_calendar
-    google:
-      calendar_id: primary
-      download_docs: true
-
-targets:
-  obsidian:
-    type: obsidian
-    obsidian:
-      default_folder: Calendar
-      include_frontmatter: true
-```
-
-For complete configuration options including all sources (Google, Slack, Gmail, Jira), targets (Obsidian, Logseq), and advanced settings, see **[CONFIGURATION.md](./CONFIGURATION.md)**.
-
-## Gmail Thread Grouping
-
-Reduce email clutter with intelligent thread grouping:
-
-### Thread Modes
-- **`individual`** (default) - Each email as separate file
-- **`consolidated`** - All thread messages in one file  
-- **`summary`** - Key messages only per thread
-
-### Quick Setup
-```yaml
-# Add to your config.yaml
-sources:
-  gmail_work:
-    type: gmail
-    gmail:
-      include_threads: true
-      thread_mode: "summary"          # or "consolidated"  
-      thread_summary_length: 3        # for summary mode
-      query: "in:inbox to:me"
-```
-
-### Results
-- **Before**: 62 individual email files  
-- **After**: 25 grouped items (60% reduction!)
-- **Filenames**: No spaces, command-line friendly
-  - `Thread-Summary_project-update_5-messages.md`
-  - `Thread_meeting-notes-weekly-sync_8-messages.md`
-
-See **[CONFIGURATION.md](./CONFIGURATION.md#gmail-thread-grouping)** for complete thread grouping documentation.
-
-## Command Reference
-
-### Sync Command (with Multi-Source Support)
-```bash
-# Use config defaults - syncs from ALL enabled sources
-pkm-sync gmail
-
-# Override to sync from specific source only
-pkm-sync gmail --source gmail_work
-
-# Override other settings
-pkm-sync gmail --target logseq --since today
-pkm-sync gmail --output ./custom-output --dry-run
-
-# Multi-source example output:
-# "Syncing Gmail from sources [gmail_work, gmail_personal] to obsidian"
-
-# Time formats for --since
---since today      # Today only
---since 7d         # Last 7 days  
---since 2025-01-01 # Specific date
---since 24h        # Last 24 hours
-```
-
-### Configuration Commands
-```bash
-pkm-sync config init                    # Create default config
-pkm-sync config show                    # Show current config
-pkm-sync config path                    # Show config file location
-pkm-sync config edit                    # Open config in editor
-pkm-sync config validate               # Validate configuration
-```
-
-### Legacy Commands (Still Supported)
-```bash
-pkm-sync setup      # Verify authentication
-pkm-sync calendar   # List calendar events  
-pkm-sync export     # Export Google Docs from calendar events
-```
-
-### Global Flags
-```bash
---credentials string    Path to credentials.json file
---config-dir string     Custom configuration directory
-```
-
-## Target Differences
-
-### Obsidian Output
-- YAML frontmatter with metadata
-- Hierarchical file structure support
-- Standard markdown format
-- Attachments as `[[filename]]` links
-
-### Logseq Output
-- Property blocks instead of YAML frontmatter
-- Flat file structure (all in output directory)
-- Block-based content structure
-- Date format: `[[Jan 2nd, 2006]]`
-- Tags as `#tagname`
+The app opens your browser automatically for OAuth consent. The token is saved in the same directory as `credentials.json`. If the automatic flow fails, it falls back to manual copy/paste mode.
 
 ## Troubleshooting
 
-### Common Issues
+### "Error 403: Access denied" or "insufficient authentication scopes"
+- Verify Calendar, Drive, and Gmail APIs are enabled in Google Cloud Console
+- Check that the OAuth consent screen includes the required scopes
+- Delete `token.json` and re-authenticate
 
-#### "Error 403: Access denied" or "insufficient authentication scopes"
-- Calendar API or Drive API may not be enabled in your Google Cloud project
-- Check that both APIs are enabled in the Google Cloud Console
-- Verify your OAuth consent screen includes the necessary scopes
+### "credentials.json not found"
+- Ensure the file is named exactly `credentials.json` (not `client_secret_*.json`)
+- Run `pkm-sync setup` to see which paths are being checked
 
-#### "credentials.json not found"
-- Make sure you've downloaded the OAuth 2.0 credentials from Google Cloud Console
-- Save the file in the default config directory (see Authentication Setup section for paths)
-- Alternatively, place in current directory as `./credentials.json`
-- Verify the file is named exactly `credentials.json` (not `client_secret_*.json`)
-- Use `pkm-sync setup` to see which paths are being checked
+### "token refresh failed"
+- Your token may have expired or been revoked
+- Delete `token.json` from your config directory and run `pkm-sync setup` again
 
-#### "token refresh failed" or authentication errors
-- Your OAuth token may have expired
-- Delete the token file from your config directory and re-authenticate
-- Token locations: same as credentials.json but named `token.json`
-- Run `pkm-sync calendar` to start the OAuth flow again
-
-### Getting Help
-Run `pkm-sync setup` to diagnose authentication issues and get specific guidance.
+### Getting help
+Run `pkm-sync setup` to diagnose authentication issues.
 
 ## Architecture
 
-### Project Structure
+### Project structure
+
 ```
 pkm-sync/
-├── cmd/                 # CLI entry points
+├── cmd/                 # CLI entry points (sync, gmail, drive, calendar, index, search, …)
 ├── internal/
-│   ├── sources/         # Data source interfaces and implementations
-│   │   └── google/      # Google Calendar + Drive (migrated code)
-│   ├── targets/         # PKM output interfaces and implementations
+│   ├── config/          # Config loading and management
+│   ├── sinks/           # FileSink (file export) + VectorSink (semantic search)
+│   ├── sources/
+│   │   └── google/      # Google Calendar, Gmail, Drive source implementations
+│   ├── sync/            # MultiSyncer orchestrator
+│   ├── targets/
 │   │   ├── obsidian/    # Obsidian-specific formatting
 │   │   └── logseq/      # Logseq-specific formatting
-│   ├── sync/           # Core synchronization logic
-│   └── config/         # Configuration management (enhanced)
-├── pkg/
-│   ├── models/         # Universal data models
-│   └── interfaces/     # Core interfaces
+│   └── transform/       # Transformer pipeline (cleanup, tagging, filtering, …)
+└── pkg/
+    ├── interfaces/      # Source, Target, Sink, Transformer, Syncer interfaces
+    └── models/          # Universal data models (BasicItem, Thread, …)
 ```
 
 ### Extensibility
-The new architecture makes it easy to add:
-- **New Sources**: Implement the `Source` interface
-- **New Targets**: Implement the `Target` interface  
-- **Custom Sync Logic**: Implement the `Syncer` interface
+
+- **New Sources**: implement the `Source` interface
+- **New Targets**: implement the `Target` interface
+- **New Sinks**: implement the `Sink` interface (file, vector DB, webhooks, …)
+- **New Transformers**: implement the `Transformer` interface
 
 ## Documentation
 
-- **[README.md](./README.md)** - Main documentation and quick start guide
-- **[CONFIGURATION.md](./CONFIGURATION.md)** - Complete configuration reference
-- **[CLAUDE.md](./CLAUDE.md)** - Development guide for Claude Code
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Development workflow and AI agent coordination requirements
+- **[README.md](./README.md)** — This file
+- **[CONFIGURATION.md](./CONFIGURATION.md)** — Complete configuration reference
+- **[CLAUDE.md](./CLAUDE.md)** — Development guide for Claude Code
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Development workflow and AI agent coordination
