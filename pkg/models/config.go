@@ -83,11 +83,40 @@ type SourceConfig struct {
 	Priority     int           `json:"priority,omitempty"      yaml:"priority,omitempty"`
 
 	// Source-specific configurations
-	// Source-specific configurations
 	Google GoogleSourceConfig `json:"google,omitempty" yaml:"google,omitempty"`
 	Slack  SlackSourceConfig  `json:"slack,omitempty"  yaml:"slack,omitempty"`
 	Gmail  GmailSourceConfig  `json:"gmail,omitempty"  yaml:"gmail,omitempty"`
 	Jira   JiraSourceConfig   `json:"jira,omitempty"   yaml:"jira,omitempty"`
+	Drive  DriveSourceConfig  `json:"drive,omitempty"  yaml:"drive,omitempty"`
+}
+
+// DriveSourceConfig defines configuration for a Google Drive source.
+type DriveSourceConfig struct {
+	Name        string `json:"name"        yaml:"name"`
+	Description string `json:"description" yaml:"description"`
+
+	// Folders to sync; empty = root only
+	FolderIDs []string `json:"folder_ids" yaml:"folder_ids"`
+	// Recurse into subfolders (default: true)
+	Recursive bool `json:"recursive" yaml:"recursive"`
+
+	IncludeSharedWithMe bool `json:"include_shared_with_me" yaml:"include_shared_with_me"`
+	IncludeSharedDrives bool `json:"include_shared_drives"  yaml:"include_shared_drives"`
+
+	// Which workspace types to export (empty = all): "document", "spreadsheet", "presentation"
+	WorkspaceTypes []string `json:"workspace_types" yaml:"workspace_types"`
+
+	// Export format preferences
+	DocExportFormat   string `json:"doc_export_format"   yaml:"doc_export_format"`   // "md" (default), "txt", "html"
+	SheetExportFormat string `json:"sheet_export_format" yaml:"sheet_export_format"` // "csv" (default), "html"
+	SlideExportFormat string `json:"slide_export_format" yaml:"slide_export_format"` // "txt" (default), "html"
+
+	// Custom Drive API query (appended with AND to the generated query)
+	Query string `json:"query" yaml:"query"`
+
+	// Rate limiting
+	RequestDelay time.Duration `json:"request_delay" yaml:"request_delay"`
+	MaxRequests  int           `json:"max_requests"  yaml:"max_requests"`
 }
 
 type GoogleSourceConfig struct {

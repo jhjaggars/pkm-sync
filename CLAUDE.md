@@ -15,7 +15,7 @@ go build -o pkm-sync ./cmd     # Build named binary
 ./pkm-sync setup             # Verify authentication configuration
 ./pkm-sync gmail             # Sync Gmail emails to PKM systems
 ./pkm-sync calendar          # List and sync Google Calendar events
-./pkm-sync drive             # Export Google Drive documents to markdown
+./pkm-sync drive             # Sync Google Drive documents to PKM systems
 
 # Configuration management
 ./pkm-sync config init       # Create default configuration
@@ -106,7 +106,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 ### Sources
 - ✅ **Gmail** - Fully implemented with multi-instance support, advanced filtering, thread grouping, and performance optimizations
 - ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
-- ✅ **Google Drive** - Fully implemented for document export
+- ✅ **Google Drive** - Fully implemented as a first-class source (`google_drive` type) syncing Docs/Sheets/Slides from folders and shared drives
 - 🔧 **Additional sources** (Slack, Jira) are planned but not yet implemented
 
 ### Targets
@@ -136,10 +136,11 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - Calendar-specific functionality
   - Example: `pkm-sync calendar --start 2025-01-01 --end 2025-01-31`
 
-- **`drive`** - Export Google Drive documents to markdown
-  - `drive fetch <URL>` - Fetch specific document by URL (supports txt, md, html, csv formats)
-  - Drive-specific functionality for document export
-  - Example: `pkm-sync drive fetch https://docs.google.com/document/d/...`
+- **`drive`** - Sync Google Drive documents (Docs, Sheets, Slides) to PKM systems
+  - Reads `google_drive` sources from config file (folder IDs, shared drives, workspace types)
+  - `drive fetch <URL>` - Fetch a single document by URL and write to stdout (unchanged)
+  - Example: `pkm-sync drive --source my_drive --target obsidian --since 7d`
+  - Example: `pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md`
 
 ### Utility Commands
 - **`setup`** - Verify authentication configuration

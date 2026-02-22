@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"pkm-sync/pkg/models"
 
+	mdconverter "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
@@ -363,4 +365,240 @@ func (s *Service) ExportDocument(fileID, exportMimeType string) (io.ReadCloser, 
 	}
 
 	return resp.Body, nil
+}
+
+// IsGoogleWorkspaceFile returns true if the MIME type is one of the three supported Workspace types.
+func IsGoogleWorkspaceFile(mimeType string) bool {
+	switch mimeType {
+	case MimeTypeGoogleDoc, MimeTypeGoogleSheet, MimeTypeGooglePresentation:
+		return true
+	}
+
+	return false
+}
+
+// buildQuery constructs a Drive API query string from the given options.
+// The returned string is suitable for use as the q parameter in Files.List().
+func buildQuery(opts ListFilesOptions) string {
+	var parts []string
+
+	// Never include trashed files
+	parts = append(parts, "trashed = false")
+
+	if opts.FolderID != "" {
+		parts = append(parts, fmt.Sprintf("'%s' in parents", opts.FolderID))
+	}
+
+	if opts.IncludeSharedWithMe {
+		parts = append(parts, "sharedWithMe = true")
+	}
+
+	if !opts.ModifiedAfter.IsZero() {
+		parts = append(parts, fmt.Sprintf("modifiedTime > '%s'", opts.ModifiedAfter.UTC().Format(time.RFC3339)))
+	}
+
+	if len(opts.MimeTypes) == 1 {
+		parts = append(parts, fmt.Sprintf("mimeType = '%s'", opts.MimeTypes[0]))
+	} else if len(opts.MimeTypes) > 1 {
+		mimeFilters := make([]string, len(opts.MimeTypes))
+		for i, mt := range opts.MimeTypes {
+			mimeFilters[i] = fmt.Sprintf("mimeType = '%s'", mt)
+		}
+
+		parts = append(parts, "("+strings.Join(mimeFilters, " or ")+")")
+	}
+
+	query := strings.Join(parts, " and ")
+
+	if opts.ExtraQuery != "" {
+		if query != "" {
+			query += " and " + opts.ExtraQuery
+		} else {
+			query = opts.ExtraQuery
+		}
+	}
+
+	return query
+}
+
+// ListFiles lists files matching the given options, handling pagination automatically.
+func (s *Service) ListFiles(opts ListFilesOptions) ([]*DriveFileInfo, error) {
+	pageSize := int64(100)
+	if opts.PageSize > 0 {
+		pageSize = int64(opts.PageSize)
+	}
+
+	query := buildQuery(opts)
+
+	var files []*DriveFileInfo
+
+	pageToken := ""
+
+	for {
+		const fields = "nextPageToken, " +
+			"files(id,name,mimeType,webViewLink,modifiedTime,createdTime,owners,size,parents,description,starred)"
+
+		req := s.client.Files.List().
+			Fields(fields).
+			Q(query).
+			PageSize(pageSize)
+
+		if opts.IncludeSharedDrives {
+			req = req.IncludeItemsFromAllDrives(true).SupportsAllDrives(true)
+		}
+
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
+		}
+
+		result, err := req.Do()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list drive files: %w", err)
+		}
+
+		for _, f := range result.Files {
+			info := convertFileInfo(f)
+			files = append(files, info)
+
+			if opts.MaxResults > 0 && len(files) >= opts.MaxResults {
+				return files, nil
+			}
+		}
+
+		if result.NextPageToken == "" {
+			break
+		}
+
+		pageToken = result.NextPageToken
+	}
+
+	return files, nil
+}
+
+// ListFilesInFolder lists files in a specific folder. If recursive is true, subfolders are
+// traversed and their contents included. folderID "root" refers to the Drive root.
+func (s *Service) ListFilesInFolder(
+	folderID string,
+	since time.Time,
+	recursive bool,
+	opts ListFilesOptions,
+) ([]*DriveFileInfo, error) {
+	folderOpts := opts
+	folderOpts.FolderID = folderID
+	folderOpts.ModifiedAfter = since
+	// Don't use sharedWithMe filter when listing by folder
+	folderOpts.IncludeSharedWithMe = false
+
+	files, err := s.ListFiles(folderOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if !recursive {
+		return files, nil
+	}
+
+	// Find subfolders
+	subfolderOpts := ListFilesOptions{
+		FolderID:            folderID,
+		MimeTypes:           []string{"application/vnd.google-apps.folder"},
+		IncludeSharedDrives: opts.IncludeSharedDrives,
+	}
+
+	subfolders, err := s.ListFiles(subfolderOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list subfolders in %s: %w", folderID, err)
+	}
+
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f.ID] = true
+	}
+
+	for _, subfolder := range subfolders {
+		subFiles, err := s.ListFilesInFolder(subfolder.ID, since, recursive, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list files in subfolder %s: %w", subfolder.ID, err)
+		}
+
+		for _, f := range subFiles {
+			if !seen[f.ID] {
+				seen[f.ID] = true
+				files = append(files, f)
+			}
+		}
+	}
+
+	return files, nil
+}
+
+// ListSharedWithMe lists Google Workspace files shared with the authenticated user.
+func (s *Service) ListSharedWithMe(since time.Time, opts ListFilesOptions) ([]*DriveFileInfo, error) {
+	sharedOpts := opts
+	sharedOpts.FolderID = ""
+	sharedOpts.IncludeSharedWithMe = true
+	sharedOpts.ModifiedAfter = since
+
+	return s.ListFiles(sharedOpts)
+}
+
+// ExportAsString exports a Google Workspace file as a string. If convertToMarkdown is true
+// and the content is HTML, it will be converted to Markdown.
+func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdown bool) (string, error) {
+	body, err := s.ExportDocument(fileID, exportMimeType)
+	if err != nil {
+		return "", err
+	}
+
+	defer func() {
+		_ = body.Close()
+	}()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read exported content: %w", err)
+	}
+
+	if convertToMarkdown {
+		md, err := mdconverter.ConvertString(string(data))
+		if err != nil {
+			return "", fmt.Errorf("failed to convert HTML to markdown: %w", err)
+		}
+
+		return md, nil
+	}
+
+	return string(data), nil
+}
+
+// convertFileInfo converts a Drive API File object to a DriveFileInfo.
+func convertFileInfo(f *drive.File) *DriveFileInfo {
+	info := &DriveFileInfo{
+		ID:          f.Id,
+		Name:        f.Name,
+		MimeType:    f.MimeType,
+		WebViewLink: f.WebViewLink,
+		Description: f.Description,
+		Starred:     f.Starred,
+		Size:        f.Size,
+		Parents:     f.Parents,
+	}
+
+	for _, owner := range f.Owners {
+		info.Owners = append(info.Owners, owner.DisplayName)
+	}
+
+	if f.ModifiedTime != "" {
+		if t, err := time.Parse(time.RFC3339, f.ModifiedTime); err == nil {
+			info.ModifiedTime = t
+		}
+	}
+
+	if f.CreatedTime != "" {
+		if t, err := time.Parse(time.RFC3339, f.CreatedTime); err == nil {
+			info.CreatedTime = t
+		}
+	}
+
+	return info
 }
