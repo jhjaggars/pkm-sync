@@ -96,8 +96,9 @@ linters:
       # Exclude some linters from running on CLI commands
       - path: 'cmd/'
         linters:
-          - lll  # CLI help text can be long
+          - lll     # CLI help text can be long
           - goconst
+          - dupl    # CLI commands share structural boilerplate by design
 
 severity:
   default: error
