@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google"
 	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/targets/logseq"
 	"pkm-sync/internal/targets/obsidian"
+	"pkm-sync/internal/transform"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 )
@@ -202,6 +206,144 @@ func getSourceOutputDirectory(baseOutputDir string, sourceConfig models.SourceCo
 	}
 
 	return baseOutputDir
+}
+
+// sourceSyncConfig holds all parameters for running a source-type-specific sync.
+type sourceSyncConfig struct {
+	SourceType   string   // e.g. "gmail", "google_drive"
+	Sources      []string // resolved list of source names to sync
+	TargetName   string
+	OutputDir    string
+	Since        string // display/default value
+	SinceFlag    string // raw --since CLI flag value (empty = not set by user)
+	DefaultLimit int
+	DryRun       bool
+	OutputFormat string
+	SourceKind   string // e.g. "Gmail", "Drive" — used in log messages
+	ItemKind     string // e.g. "emails", "documents" — used in success message
+}
+
+// runSourceSync executes the full sync pipeline for a specific source type.
+// It is the shared implementation used by the gmail and drive commands.
+func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
+	defaultSinceTime, err := parseSinceTime(ssc.Since)
+	if err != nil {
+		return fmt.Errorf("invalid since parameter: %w", err)
+	}
+
+	fmt.Printf("Syncing %s from sources [%s] to %s (output: %s, since: %s)\n",
+		ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.TargetName, ssc.OutputDir, ssc.Since)
+
+	var entries []syncer.SourceEntry
+
+	for _, srcName := range ssc.Sources {
+		sourceConfig, exists := cfg.Sources[srcName]
+		if !exists {
+			fmt.Printf("Warning: %s source '%s' not configured, skipping\n", ssc.SourceKind, srcName)
+
+			continue
+		}
+
+		if !sourceConfig.Enabled {
+			fmt.Printf("%s source '%s' is disabled, skipping\n", ssc.SourceKind, srcName)
+
+			continue
+		}
+
+		if sourceConfig.Type != ssc.SourceType {
+			fmt.Printf("Warning: source '%s' is not a %s source (type: %s), skipping\n", srcName, ssc.SourceKind, sourceConfig.Type)
+
+			continue
+		}
+
+		src, err := createSourceWithConfig(srcName, sourceConfig, nil)
+		if err != nil {
+			fmt.Printf("Warning: failed to create %s source '%s': %v, skipping\n", ssc.SourceKind, srcName, err)
+
+			continue
+		}
+
+		entry := syncer.SourceEntry{Name: srcName, Src: src}
+
+		// Per-source since: config overrides default, but CLI flag takes precedence.
+		if sourceConfig.Since != "" && ssc.SinceFlag == "" {
+			t, err := parseSinceTime(sourceConfig.Since)
+			if err != nil {
+				fmt.Printf("Warning: invalid since time for source '%s': %v, using default\n", srcName, err)
+			} else {
+				entry.Since = t
+			}
+		}
+
+		// Per-source limit (cap at 2500).
+		if sourceConfig.Google.MaxResults > 0 {
+			if sourceConfig.Google.MaxResults > 2500 {
+				fmt.Printf("Warning: max_results for source '%s' is %d (maximum: 2500), capping\n", srcName, sourceConfig.Google.MaxResults)
+
+				entry.Limit = 2500
+			} else {
+				entry.Limit = sourceConfig.Google.MaxResults
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if len(entries) == 0 {
+		return fmt.Errorf("no valid %s sources could be initialized", ssc.SourceKind)
+	}
+
+	target, err := createTargetWithConfig(ssc.TargetName, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create target: %w", err)
+	}
+
+	fileSink := sinks.NewFileSink(target, ssc.OutputDir)
+
+	pipeline := transform.NewPipeline()
+	for _, t := range transform.GetAllContentProcessingTransformers() {
+		if err := pipeline.AddTransformer(t); err != nil {
+			return fmt.Errorf("failed to add transformer %s: %w", t.Name(), err)
+		}
+	}
+
+	s := syncer.NewMultiSyncer(pipeline)
+
+	syncResult, err := s.SyncAll(
+		context.Background(),
+		entries,
+		[]interfaces.Sink{fileSink},
+		syncer.MultiSyncOptions{
+			DefaultSince: defaultSinceTime,
+			DefaultLimit: ssc.DefaultLimit,
+			SourceTags:   cfg.Sync.SourceTags,
+			TransformCfg: cfg.Transformers,
+			DryRun:       ssc.DryRun,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	if ssc.DryRun {
+		previews, err := target.Preview(syncResult.Items, ssc.OutputDir)
+		if err != nil {
+			return fmt.Errorf("failed to generate preview: %w", err)
+		}
+
+		switch ssc.OutputFormat {
+		case "json":
+			return outputDryRunJSON(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+		case "summary":
+			return outputDryRunSummary(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+		default:
+			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", ssc.OutputFormat)
+		}
+	}
+
+	fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)
+
+	return nil
 }
 
 // DryRunOutput is the complete JSON output structure for dry-run mode.
