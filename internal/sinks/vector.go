@@ -3,7 +3,6 @@ package sinks
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -11,11 +10,7 @@ import (
 	"pkm-sync/internal/embeddings"
 	"pkm-sync/internal/vectorstore"
 	"pkm-sync/pkg/models"
-
-	mdconverter "github.com/JohannesKaufmann/html-to-markdown/v2"
 )
-
-var multipleNewlines = regexp.MustCompile(`\n\s*\n\s*\n`)
 
 // VectorSinkConfig holds configuration for the VectorSink.
 type VectorSinkConfig struct {
@@ -32,17 +27,6 @@ type VectorSink struct {
 	store    *vectorstore.Store
 	provider embeddings.Provider
 	cfg      VectorSinkConfig
-}
-
-// threadGroup groups messages belonging to the same email thread.
-type threadGroup struct {
-	threadID     string
-	subject      string
-	messages     []models.FullItem
-	participants []string
-	startTime    time.Time
-	endTime      time.Time
-	sourceName   string
 }
 
 // NewVectorSink creates a VectorSink, opening the store and provider.
@@ -110,9 +94,17 @@ func (s *VectorSink) indexSource(
 	sourceName string,
 	items []models.FullItem,
 ) (indexed, skipped, failed int, err error) {
-	// Group messages by thread
-	threadGroups := groupMessagesByThread(items, sourceName)
-	fmt.Printf("Source %s: grouped %d items into %d threads\n", sourceName, len(items), len(threadGroups))
+	// Determine source type and pick the appropriate content builder
+	var srcType string
+	if len(items) > 0 {
+		srcType = items[0].GetSourceType()
+	}
+
+	builder := getContentBuilder(srcType)
+
+	// Group messages by thread/document
+	groups := groupMessagesByThread(items, sourceName, builder)
+	fmt.Printf("Source %s: grouped %d items into %d groups\n", sourceName, len(items), len(groups))
 
 	// Get already-indexed threads unless reindex is requested
 	var indexedThreads map[string]bool
@@ -123,19 +115,19 @@ func (s *VectorSink) indexSource(
 			return 0, 0, 0, fmt.Errorf("failed to get indexed threads: %w", err)
 		}
 
-		fmt.Printf("Source %s: already indexed: %d threads\n", sourceName, len(indexedThreads))
+		fmt.Printf("Source %s: already indexed: %d groups\n", sourceName, len(indexedThreads))
 	} else {
 		indexedThreads = make(map[string]bool)
 	}
 
-	for threadID, group := range threadGroups {
+	for threadID, group := range groups {
 		if indexedThreads[threadID] && !s.cfg.Reindex {
 			skipped++
 
 			continue
 		}
 
-		content := buildThreadContent(group)
+		content := builder.buildContent(group)
 
 		originalLen := len(content)
 		if s.cfg.MaxContentLen > 0 && len(content) > s.cfg.MaxContentLen {
@@ -147,7 +139,7 @@ func (s *VectorSink) indexSource(
 			time.Sleep(time.Duration(s.cfg.Delay) * time.Millisecond)
 		}
 
-		// Log progress every 10 threads
+		// Log progress every 10 groups
 		if (indexed+skipped+failed)%10 == 0 && (indexed+skipped+failed) > 0 {
 			truncated := ""
 			if len(content) < originalLen {
@@ -160,7 +152,7 @@ func (s *VectorSink) indexSource(
 
 		embedding, err := s.provider.Embed(ctx, content)
 		if err != nil {
-			fmt.Printf("Warning: Failed to embed thread %s (%s, %d chars): %v\n",
+			fmt.Printf("Warning: Failed to embed group %s (%s, %d chars): %v\n",
 				threadID, group.subject, originalLen, err)
 
 			failed++
@@ -168,7 +160,7 @@ func (s *VectorSink) indexSource(
 			continue
 		}
 
-		metadata := buildThreadMetadata(group)
+		metadata := builder.buildMetadata(group)
 
 		var firstMsgID string
 		if len(group.messages) > 0 {
@@ -180,7 +172,7 @@ func (s *VectorSink) indexSource(
 			ThreadID:     threadID,
 			Title:        group.subject,
 			Content:      content,
-			SourceType:   "gmail",
+			SourceType:   srcType,
 			SourceName:   sourceName,
 			MessageCount: len(group.messages),
 			Metadata:     metadata,
@@ -189,7 +181,7 @@ func (s *VectorSink) indexSource(
 		}
 
 		if err := s.store.UpsertDocument(doc, embedding); err != nil {
-			fmt.Printf("Warning: Failed to index thread %s: %v\n", threadID, err)
+			fmt.Printf("Warning: Failed to index group %s: %v\n", threadID, err)
 
 			continue
 		}
@@ -239,8 +231,8 @@ func groupBySource(items []models.FullItem) map[string][]models.FullItem {
 // extractSourceName extracts the source name from item tags or falls back to source type.
 func extractSourceName(item models.FullItem) string {
 	for _, tag := range item.GetTags() {
-		if strings.HasPrefix(tag, "source:") {
-			return strings.TrimPrefix(tag, "source:")
+		if rest, ok := strings.CutPrefix(tag, "source:"); ok {
+			return rest
 		}
 	}
 
@@ -248,12 +240,13 @@ func extractSourceName(item models.FullItem) string {
 		return st
 	}
 
-	return "unknown"
+	return sourceTypeUnknown
 }
 
-// groupMessagesByThread groups messages by thread ID.
-func groupMessagesByThread(items []models.FullItem, sourceName string) map[string]*threadGroup {
-	groups := make(map[string]*threadGroup)
+// groupMessagesByThread groups items by thread ID using the builder for title cleaning.
+// For non-threaded items (calendar, drive), the fallback to item.GetID() produces one group per item.
+func groupMessagesByThread(items []models.FullItem, sourceName string, builder contentBuilder) map[string]*itemGroup {
+	groups := make(map[string]*itemGroup)
 
 	for _, item := range items {
 		if item == nil {
@@ -275,17 +268,14 @@ func groupMessagesByThread(items []models.FullItem, sourceName string) map[strin
 			if item.GetCreatedAt().After(group.endTime) {
 				group.endTime = item.GetCreatedAt()
 			}
-
-			updateGroupParticipants(group, item)
 		} else {
-			groups[threadID] = &threadGroup{
-				threadID:     threadID,
-				subject:      extractCleanSubject(item),
-				messages:     []models.FullItem{item},
-				participants: extractParticipants(item),
-				startTime:    item.GetCreatedAt(),
-				endTime:      item.GetCreatedAt(),
-				sourceName:   sourceName,
+			groups[threadID] = &itemGroup{
+				threadID:   threadID,
+				subject:    builder.cleanTitle(item),
+				messages:   []models.FullItem{item},
+				startTime:  item.GetCreatedAt(),
+				endTime:    item.GetCreatedAt(),
+				sourceName: sourceName,
 			}
 		}
 	}
@@ -299,148 +289,6 @@ func groupMessagesByThread(items []models.FullItem, sourceName string) map[strin
 	return groups
 }
 
-// buildThreadContent constructs structured embedding text for a thread group.
-func buildThreadContent(group *threadGroup) string {
-	var b strings.Builder
-
-	b.WriteString(fmt.Sprintf("Thread: %s\n\n", group.subject))
-
-	for i, item := range group.messages {
-		b.WriteString(fmt.Sprintf("--- Message %d (%s) ---\n", i+1, item.GetCreatedAt().Format("2006-01-02 15:04")))
-
-		metadata := item.GetMetadata()
-
-		if from, ok := metadata["from"].(string); ok && from != "" {
-			b.WriteString(fmt.Sprintf("From: %s\n", from))
-		}
-
-		if to, ok := metadata["to"].(string); ok && to != "" {
-			b.WriteString(fmt.Sprintf("To: %s\n", to))
-		}
-
-		if cc, ok := metadata["cc"].(string); ok && cc != "" {
-			b.WriteString(fmt.Sprintf("Cc: %s\n", cc))
-		}
-
-		if bcc, ok := metadata["bcc"].(string); ok && bcc != "" {
-			b.WriteString(fmt.Sprintf("Bcc: %s\n", bcc))
-		}
-
-		b.WriteString("\n")
-
-		content := prepareContentForEmbedding(item.GetContent())
-		if content != "" {
-			b.WriteString(content)
-		} else {
-			b.WriteString("(no content)")
-		}
-
-		b.WriteString("\n\n")
-	}
-
-	return b.String()
-}
-
-// buildThreadMetadata constructs metadata map for vector store storage.
-func buildThreadMetadata(group *threadGroup) map[string]interface{} {
-	participantsMap := make(map[string]bool)
-	for _, p := range group.participants {
-		participantsMap[p] = true
-	}
-
-	participants := make([]string, 0, len(participantsMap))
-	for p := range participantsMap {
-		participants = append(participants, p)
-	}
-
-	messageIDs := make([]string, len(group.messages))
-	for i, msg := range group.messages {
-		messageIDs[i] = msg.GetID()
-	}
-
-	messages := make([]map[string]interface{}, len(group.messages))
-	for i, msg := range group.messages {
-		metadata := msg.GetMetadata()
-
-		msgData := map[string]interface{}{
-			"date":    msg.GetCreatedAt().Format(time.RFC3339),
-			"subject": msg.GetTitle(),
-		}
-
-		if from, ok := metadata["from"].(string); ok {
-			msgData["from"] = from
-		}
-
-		if to, ok := metadata["to"].(string); ok {
-			msgData["to"] = to
-		}
-
-		if cc, ok := metadata["cc"].(string); ok {
-			msgData["cc"] = cc
-		}
-
-		if bcc, ok := metadata["bcc"].(string); ok {
-			msgData["bcc"] = bcc
-		}
-
-		messages[i] = msgData
-	}
-
-	return map[string]interface{}{
-		"participants":  participants,
-		"message_ids":   messageIDs,
-		"message_count": len(group.messages),
-		"date_range": map[string]string{
-			"start": group.startTime.Format(time.RFC3339),
-			"end":   group.endTime.Format(time.RFC3339),
-		},
-		"messages": messages,
-	}
-}
-
-// prepareContentForEmbedding converts HTML to markdown and cleans content for embeddings.
-func prepareContentForEmbedding(content string) string {
-	if !strings.Contains(content, "<") || !strings.Contains(content, ">") {
-		return content
-	}
-
-	markdown, err := mdconverter.ConvertString(content)
-	if err != nil {
-		return content
-	}
-
-	markdown = stripQuotedText(markdown)
-	markdown = collapseWhitespace(markdown)
-
-	return strings.TrimSpace(markdown)
-}
-
-// stripQuotedText removes email quoted text from content.
-func stripQuotedText(content string) string {
-	lines := strings.Split(content, "\n")
-	result := make([]string, 0, len(lines))
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, ">") {
-			break
-		}
-
-		if strings.HasPrefix(trimmed, "On ") && strings.Contains(trimmed, " wrote:") {
-			break
-		}
-
-		result = append(result, line)
-	}
-
-	return strings.Join(result, "\n")
-}
-
-// collapseWhitespace reduces multiple consecutive newlines to two.
-func collapseWhitespace(content string) string {
-	return multipleNewlines.ReplaceAllString(content, "\n\n")
-}
-
 // extractThreadID extracts the thread ID from item metadata.
 func extractThreadID(item models.FullItem) string {
 	metadata := item.GetMetadata()
@@ -449,63 +297,4 @@ func extractThreadID(item models.FullItem) string {
 	}
 
 	return ""
-}
-
-// extractCleanSubject removes Re:/Fwd: prefixes from a subject.
-func extractCleanSubject(item models.FullItem) string {
-	subject := strings.TrimSpace(item.GetTitle())
-	prefixes := []string{"Re: ", "RE: ", "Fwd: ", "FWD: "}
-
-	for changed := true; changed; {
-		changed = false
-
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(subject, prefix) {
-				subject = strings.TrimPrefix(subject, prefix)
-				changed = true
-			}
-		}
-	}
-
-	return subject
-}
-
-// extractParticipants extracts participant addresses from item metadata.
-func extractParticipants(item models.FullItem) []string {
-	var participants []string
-
-	metadata := item.GetMetadata()
-
-	for _, field := range []string{"from", "to", "cc", "bcc"} {
-		if val, ok := metadata[field].(string); ok && val != "" {
-			participants = append(participants, val)
-		}
-	}
-
-	return participants
-}
-
-// updateGroupParticipants adds new participants from an item to the group.
-func updateGroupParticipants(group *threadGroup, item models.FullItem) {
-	metadata := item.GetMetadata()
-
-	addIfNew := func(email string) {
-		if email == "" {
-			return
-		}
-
-		for _, p := range group.participants {
-			if p == email {
-				return
-			}
-		}
-
-		group.participants = append(group.participants, email)
-	}
-
-	for _, field := range []string{"from", "to", "cc", "bcc"} {
-		if val, ok := metadata[field].(string); ok {
-			addIfNew(val)
-		}
-	}
 }

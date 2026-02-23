@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"pkm-sync/internal/config"
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google"
 	syncer "pkm-sync/internal/sync"
@@ -128,6 +129,29 @@ func createTargetWithConfig(name string, cfg *models.Config) (interfaces.Target,
 // parseSinceTime delegates to the unified date parser.
 func parseSinceTime(since string) (time.Time, error) {
 	return parseDateTime(since)
+}
+
+// maybeCreateVectorSink creates a VectorSink when auto_index is enabled in config.
+// Returns nil, nil when auto_index is false. The caller must call Close() on non-nil results.
+func maybeCreateVectorSink(cfg *models.Config) (*sinks.VectorSink, error) {
+	if !cfg.VectorDB.AutoIndex {
+		return nil, nil
+	}
+
+	dbPath := cfg.VectorDB.DBPath
+	if dbPath == "" {
+		configDir, err := config.GetConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config directory: %w", err)
+		}
+
+		dbPath = filepath.Join(configDir, "vectors.db")
+	}
+
+	return sinks.NewVectorSink(sinks.VectorSinkConfig{
+		DBPath:        dbPath,
+		EmbeddingsCfg: cfg.Embeddings,
+	})
 }
 
 // getEnabledSources returns enabled source names from config.
@@ -299,6 +323,18 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	}
 
 	fileSink := sinks.NewFileSink(target, ssc.OutputDir)
+	sinksSlice := []interfaces.Sink{fileSink}
+
+	vectorSink, err := maybeCreateVectorSink(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create vector sink: %w", err)
+	}
+
+	if vectorSink != nil {
+		defer vectorSink.Close()
+
+		sinksSlice = append(sinksSlice, vectorSink)
+	}
 
 	pipeline := transform.NewPipeline()
 	for _, t := range transform.GetAllContentProcessingTransformers() {
@@ -309,14 +345,17 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 	s := syncer.NewMultiSyncer(pipeline)
 
+	// Enable source tags when auto-indexing so VectorSink can extract source names for dedup
+	sourceTags := cfg.Sync.SourceTags || vectorSink != nil
+
 	syncResult, err := s.SyncAll(
 		context.Background(),
 		entries,
-		[]interfaces.Sink{fileSink},
+		sinksSlice,
 		syncer.MultiSyncOptions{
 			DefaultSince: defaultSinceTime,
 			DefaultLimit: ssc.DefaultLimit,
-			SourceTags:   cfg.Sync.SourceTags,
+			SourceTags:   sourceTags,
 			TransformCfg: cfg.Transformers,
 			DryRun:       ssc.DryRun,
 		},

@@ -158,6 +158,18 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	fileSink := sinks.NewFileSink(target, finalOutputDir)
+	sinksSlice := []interfaces.Sink{fileSink}
+
+	vectorSink, err := maybeCreateVectorSink(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create vector sink: %w", err)
+	}
+
+	if vectorSink != nil {
+		defer vectorSink.Close()
+
+		sinksSlice = append(sinksSlice, vectorSink)
+	}
 
 	// Build transformer pipeline with all transformers
 	pipeline := transform.NewPipeline()
@@ -167,17 +179,20 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Enable source tags when auto-indexing so VectorSink can extract source names for dedup
+	sourceTags := cfg.Sync.SourceTags || vectorSink != nil
+
 	// Run the full sync pipeline
 	s := syncer.NewMultiSyncer(pipeline)
 
 	syncResult, err := s.SyncAll(
 		context.Background(),
 		entries,
-		[]interfaces.Sink{fileSink},
+		sinksSlice,
 		syncer.MultiSyncOptions{
 			DefaultSince: defaultSinceTime,
 			DefaultLimit: syncLimit,
-			SourceTags:   cfg.Sync.SourceTags,
+			SourceTags:   sourceTags,
 			TransformCfg: cfg.Transformers,
 			DryRun:       syncDryRun,
 		},

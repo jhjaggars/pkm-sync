@@ -17,6 +17,7 @@ import (
 
 var (
 	indexSourceName    string
+	indexTypeFilter    string
 	indexSince         string
 	indexLimit         int
 	indexReindex       bool
@@ -26,25 +27,27 @@ var (
 
 var indexCmd = &cobra.Command{
 	Use:   "index",
-	Short: "Index Gmail messages into vector database for semantic search",
-	Long: `Index Gmail messages into a vector database for semantic search.
-Messages are grouped by thread and embedded together for better context.
+	Short: "Index items into vector database for semantic search",
+	Long: `Index items from any source into a vector database for semantic search.
+Items are grouped by thread/document and embedded together for better context.
 
 Examples:
   pkm-sync index --source gmail_work --since 30d
-  pkm-sync index --source gmail_work --since 7d --limit 500
-  pkm-sync index --reindex  # Re-index all messages from all sources`,
+  pkm-sync index --type gmail --since 7d --limit 500
+  pkm-sync index --type google_calendar --since 30d
+  pkm-sync index --reindex  # Re-index all items from all sources`,
 	RunE: runIndexCommand,
 }
 
 func init() {
 	rootCmd.AddCommand(indexCmd)
-	indexCmd.Flags().StringVar(&indexSourceName, "source", "", "Gmail source to index (gmail_work, gmail_personal, etc.)")
-	indexCmd.Flags().StringVar(&indexSince, "since", "30d", "Index emails since (7d, 2006-01-02, today)")
-	indexCmd.Flags().IntVar(&indexLimit, "limit", 1000, "Maximum number of emails to fetch per source")
-	indexCmd.Flags().BoolVar(&indexReindex, "reindex", false, "Re-index already indexed threads")
+	indexCmd.Flags().StringVar(&indexSourceName, "source", "", "Source to index (gmail_work, my_calendar, etc.)")
+	indexCmd.Flags().StringVar(&indexTypeFilter, "type", "", "Filter to source type (gmail, google_calendar, google_drive)")
+	indexCmd.Flags().StringVar(&indexSince, "since", "30d", "Index items since (7d, 2006-01-02, today)")
+	indexCmd.Flags().IntVar(&indexLimit, "limit", 1000, "Maximum number of items to fetch per source")
+	indexCmd.Flags().BoolVar(&indexReindex, "reindex", false, "Re-index already indexed items")
 	indexCmd.Flags().IntVar(&indexDelay, "delay", 200, "Delay between embeddings in milliseconds (prevents Ollama overload)")
-	indexCmd.Flags().IntVar(&indexMaxContentLen, "max-content-length", 30000, "Truncate email content to this many characters (0 = no limit)")
+	indexCmd.Flags().IntVar(&indexMaxContentLen, "max-content-length", 30000, "Truncate content to this many characters (0 = no limit)")
 }
 
 func runIndexCommand(cmd *cobra.Command, args []string) error {
@@ -55,16 +58,16 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Determine which Gmail sources to index
+	// Determine which sources to index
 	var sourcesToIndex []string
 	if indexSourceName != "" {
 		sourcesToIndex = []string{indexSourceName}
 	} else {
-		sourcesToIndex = getEnabledGmailSources(cfg)
+		sourcesToIndex = getEnabledSources(cfg)
 	}
 
 	if len(sourcesToIndex) == 0 {
-		return fmt.Errorf("no Gmail sources configured. Please configure Gmail sources in your config file or use --source flag")
+		return fmt.Errorf("no sources configured. Please configure sources in your config file or use --source flag")
 	}
 
 	sinceTime, err := parseSinceTime(indexSince)
@@ -100,7 +103,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer vectorSink.Close()
 
-	// Build source entries (force ExtractRecipients for richer embeddings)
+	// Build source entries
 	entries := make([]syncer.SourceEntry, 0, len(sourcesToIndex))
 
 	for _, sourceName := range sourcesToIndex {
@@ -111,14 +114,15 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if sourceConfig.Type != "gmail" {
-			fmt.Printf("Warning: Source '%s' is not a Gmail source (type: %s), skipping\n", sourceName, sourceConfig.Type)
-
+		// Apply --type filter if specified
+		if indexTypeFilter != "" && sourceConfig.Type != indexTypeFilter {
 			continue
 		}
 
-		// Force ExtractRecipients for richer embedding metadata
-		sourceConfig.Gmail.ExtractRecipients = true
+		// Force ExtractRecipients for Gmail sources to get richer embedding metadata
+		if sourceConfig.Type == "gmail" {
+			sourceConfig.Gmail.ExtractRecipients = true
+		}
 
 		client, err := auth.GetClient()
 		if err != nil {
@@ -139,7 +143,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(entries) == 0 {
-		return fmt.Errorf("no valid Gmail sources to index")
+		return fmt.Errorf("no valid sources to index")
 	}
 
 	// Run sync pipeline: fetch → (no transform) → vector sink
