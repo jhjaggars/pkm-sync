@@ -234,7 +234,7 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	fmt.Printf("Syncing %s from sources [%s] to %s (output: %s, since: %s)\n",
 		ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.TargetName, ssc.OutputDir, ssc.Since)
 
-	var entries []syncer.SourceEntry
+	entries := make([]syncer.SourceEntry, 0, len(ssc.Sources))
 
 	for _, srcName := range ssc.Sources {
 		sourceConfig, exists := cfg.Sources[srcName]

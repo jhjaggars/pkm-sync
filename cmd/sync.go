@@ -92,7 +92,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		strings.Join(sourcesToSync, ", "), finalTargetName, finalOutputDir, finalSince)
 
 	// Build source entries (pre-create sources with per-source options)
-	var entries []syncer.SourceEntry
+	entries := make([]syncer.SourceEntry, 0, len(sourcesToSync))
 
 	for _, srcName := range sourcesToSync {
 		sourceConfig, exists := cfg.Sources[srcName]

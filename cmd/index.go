@@ -101,7 +101,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 	defer vectorSink.Close()
 
 	// Build source entries (force ExtractRecipients for richer embeddings)
-	var entries []syncer.SourceEntry
+	entries := make([]syncer.SourceEntry, 0, len(sourcesToIndex))
 
 	for _, sourceName := range sourcesToIndex {
 		sourceConfig, exists := cfg.Sources[sourceName]
