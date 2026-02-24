@@ -10,6 +10,9 @@ GO_BUILD_CMD := go build -v $(GO_PACKAGES)
 GO_TEST_CMD := go test -v -race $(GO_PACKAGES)
 GOLANGCI_LINT := golangci-lint
 
+# Install prefix (XDG-style user-local)
+PREFIX := $(HOME)/.local
+
 # Default target: Run all CI checks.
 .PHONY: all
 all: ci
@@ -50,6 +53,27 @@ build:
 binary:
 	@echo "🏗️ Building binary..."
 	@go build -o $(BINARY_NAME) ./cmd
+
+# Target: fmt - Formats all Go source files.
+.PHONY: fmt
+fmt:
+	@echo "🖊️ Formatting Go files..."
+	@gofmt -w $(shell find . -name '*.go' -not -path './vendor/*')
+
+# Target: install - Builds and installs the binary to $(PREFIX)/bin.
+.PHONY: install
+install: binary
+	@echo "📦 Installing $(BINARY_NAME) to $(PREFIX)/bin..."
+	@mkdir -p $(PREFIX)/bin
+	@cp $(BINARY_NAME) $(PREFIX)/bin/$(BINARY_NAME)
+	@echo "✅ Installed to $(PREFIX)/bin/$(BINARY_NAME)"
+
+# Target: uninstall - Removes the installed binary.
+.PHONY: uninstall
+uninstall:
+	@echo "🗑️ Removing $(PREFIX)/bin/$(BINARY_NAME)..."
+	@rm -f $(PREFIX)/bin/$(BINARY_NAME)
+	@echo "✅ Uninstalled $(BINARY_NAME)"
 
 # Target: clean - Removes the built binary.
 .PHONY: clean
@@ -100,6 +124,9 @@ help:
 	@echo "  test                   - Run unit tests."
 	@echo "  build                  - Build the project."
 	@echo "  binary                 - Build the pkm-sync binary."
+	@echo "  fmt                    - Format all Go source files."
+	@echo "  install                - Build and install binary to \$(PREFIX)/bin."
+	@echo "  uninstall              - Remove installed binary from \$(PREFIX)/bin."
 	@echo "  clean                  - Remove the built binary."
 	@echo "  tidy                   - Tidy go modules."
 	@echo "  check-golangci-version - Verify golangci-lint v2.0+ is installed."
