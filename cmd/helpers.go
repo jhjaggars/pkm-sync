@@ -322,7 +322,30 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		return fmt.Errorf("failed to create target: %w", err)
 	}
 
-	fileSink := sinks.NewFileSink(target, ssc.OutputDir)
+	// Apply output_subdir: use the common subdir if all sources agree, else warn and use base dir.
+	effectiveOutputDir := ssc.OutputDir
+	if len(entries) == 1 {
+		effectiveOutputDir = getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
+	} else {
+		first := getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
+		allSame := true
+
+		for _, e := range entries[1:] {
+			if getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[e.Name]) != first {
+				allSame = false
+
+				break
+			}
+		}
+
+		if allSame {
+			effectiveOutputDir = first
+		} else {
+			fmt.Printf("Warning: sources have different output_subdir settings; using base output dir %s\n", ssc.OutputDir)
+		}
+	}
+
+	fileSink := sinks.NewFileSink(target, effectiveOutputDir)
 	sinksSlice := []interfaces.Sink{fileSink}
 
 	vectorSink, err := maybeCreateVectorSink(cfg)
