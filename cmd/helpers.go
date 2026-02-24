@@ -131,6 +131,59 @@ func parseSinceTime(since string) (time.Time, error) {
 	return parseDateTime(since)
 }
 
+// maybeCreateArchiveSink creates an ArchiveSink when archive.enabled is true in config.
+// Returns nil, nil when archive is disabled or source type is not gmail.
+// The caller must call Close() on non-nil results.
+func maybeCreateArchiveSink(cfg *models.Config, fetcher sinks.RawMessageFetcher) (*sinks.ArchiveSink, error) {
+	if !cfg.Archive.Enabled || fetcher == nil {
+		return nil, nil
+	}
+
+	emlDir := cfg.Archive.EMLDir
+	if emlDir == "" {
+		configDir, err := config.GetConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config directory: %w", err)
+		}
+
+		emlDir = filepath.Join(configDir, "archive", "eml")
+	}
+
+	dbPath := cfg.Archive.DBPath
+	if dbPath == "" {
+		configDir, err := config.GetConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config directory: %w", err)
+		}
+
+		dbPath = filepath.Join(configDir, "archive.db")
+	}
+
+	return sinks.NewArchiveSink(sinks.ArchiveSinkConfig{
+		EMLDir:       emlDir,
+		DBPath:       dbPath,
+		RequestDelay: cfg.Archive.RequestDelay,
+		MaxPerSync:   cfg.Archive.MaxPerSync,
+	}, fetcher)
+}
+
+// gmailFetcherFromEntries returns the first RawMessageFetcher found among the source entries.
+// Returns nil if no Gmail source with an initialized service is found.
+func gmailFetcherFromEntries(entries []syncer.SourceEntry) sinks.RawMessageFetcher {
+	for _, entry := range entries {
+		gs, ok := entry.Src.(*google.GoogleSource)
+		if !ok {
+			continue
+		}
+
+		if svc := gs.GetGmailService(); svc != nil {
+			return svc
+		}
+	}
+
+	return nil
+}
+
 // maybeCreateVectorSink creates a VectorSink when auto_index is enabled in config.
 // Returns nil, nil when auto_index is false. The caller must call Close() on non-nil results.
 func maybeCreateVectorSink(cfg *models.Config) (*sinks.VectorSink, error) {
@@ -357,6 +410,20 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		defer vectorSink.Close()
 
 		sinksSlice = append(sinksSlice, vectorSink)
+	}
+
+	// Wire ArchiveSink for Gmail sources when archive is enabled.
+	if ssc.SourceType == "gmail" && cfg.Archive.Enabled {
+		archiveSink, archiveErr := maybeCreateArchiveSink(cfg, gmailFetcherFromEntries(entries))
+		if archiveErr != nil {
+			return fmt.Errorf("failed to create archive sink: %w", archiveErr)
+		}
+
+		if archiveSink != nil {
+			defer archiveSink.Close()
+
+			sinksSlice = append(sinksSlice, archiveSink)
+		}
 	}
 
 	pipeline := transform.NewPipeline()

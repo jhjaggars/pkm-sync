@@ -141,6 +141,13 @@ func GetDefaultConfig() *models.Config {
 			APIKey:     "",
 			Dimensions: 768,
 		},
+		Archive: models.ArchiveConfig{
+			Enabled:      false,
+			EMLDir:       "", // Will be resolved to ~/.config/pkm-sync/archive/eml at runtime
+			DBPath:       "", // Will be resolved to ~/.config/pkm-sync/archive.db at runtime
+			RequestDelay: 100,
+			MaxPerSync:   0,
+		},
 	}
 }
 

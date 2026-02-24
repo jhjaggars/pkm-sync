@@ -27,6 +27,9 @@ type Config struct {
 
 	// Embeddings provider settings
 	Embeddings EmbeddingsConfig `json:"embeddings" yaml:"embeddings"`
+
+	// Email archive settings
+	Archive ArchiveConfig `json:"archive" yaml:"archive"`
 }
 
 // TransformConfig defines transformer pipeline configuration.
@@ -342,4 +345,13 @@ type EmbeddingsConfig struct {
 	APIURL     string `json:"api_url"    yaml:"api_url"`    // API base URL
 	APIKey     string `json:"api_key"    yaml:"api_key"`    // API key (for OpenAI)
 	Dimensions int    `json:"dimensions" yaml:"dimensions"` // Embedding dimensions
+}
+
+// ArchiveConfig defines configuration for the EML + SQLite email archive.
+type ArchiveConfig struct {
+	Enabled      bool   `json:"enabled"       yaml:"enabled"`
+	EMLDir       string `json:"eml_dir"       yaml:"eml_dir"`       // Directory for raw .eml files
+	DBPath       string `json:"db_path"       yaml:"db_path"`       // Path to SQLite archive database
+	RequestDelay int    `json:"request_delay" yaml:"request_delay"` // ms between raw fetches
+	MaxPerSync   int    `json:"max_per_sync"  yaml:"max_per_sync"`  // 0 = unlimited
 }

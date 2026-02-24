@@ -435,5 +435,11 @@ func (g *GoogleSource) convertDriveFile(
 	return item, nil
 }
 
+// GetGmailService returns the Gmail service for use by external sinks (e.g. ArchiveSink).
+// Returns nil if this source is not a Gmail source or has not been configured.
+func (g *GoogleSource) GetGmailService() *gmail.Service {
+	return g.gmailService
+}
+
 // Ensure GoogleSource implements Source interface.
 var _ interfaces.Source = (*GoogleSource)(nil)

@@ -2,6 +2,7 @@ package gmail
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -149,6 +150,44 @@ func (s *Service) GetMessageWithRetry(messageID string) (*gmail.Message, error) 
 	}
 
 	return resp.(*gmail.Message), nil
+}
+
+// GetMessageRaw fetches a single message in RFC 5322 format (format=raw) and returns
+// the decoded bytes. This is used by the archive sink for lossless storage.
+func (s *Service) GetMessageRaw(messageID string) ([]byte, error) {
+	if messageID == "" {
+		return nil, fmt.Errorf("message ID is required")
+	}
+
+	if s.service == nil {
+		return nil, fmt.Errorf("gmail service is not initialized")
+	}
+
+	req := s.service.Users.Messages.Get("me", messageID).Format("raw")
+
+	resp, err := s.executeWithRetry(func() (interface{}, error) {
+		return req.Do()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to get raw message %s: %w", messageID, err)
+	}
+
+	msg := resp.(*gmail.Message)
+	if msg.Raw == "" {
+		return nil, fmt.Errorf("raw field is empty for message %s", messageID)
+	}
+
+	// Gmail returns base64url-encoded RFC 5322 bytes.
+	data, err := base64.URLEncoding.DecodeString(msg.Raw)
+	if err != nil {
+		// Try standard base64 as fallback.
+		data, err = base64.StdEncoding.DecodeString(msg.Raw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode raw message %s: %w", messageID, err)
+		}
+	}
+
+	return data, nil
 }
 
 // GetMessagesInRange retrieves messages within a specific time range.
