@@ -313,3 +313,44 @@ Agents must follow project standards:
 - Run `make ci` before completing tasks
 - Use `gh` CLI for GitHub interactions
 - Update relevant documentation when changing functionality
+
+## Claude Code Skills
+
+Five Claude Code skills in `~/.claude/skills/` expose pkm-sync capabilities to Claude directly:
+
+| Skill | Purpose |
+|-------|---------|
+| `email-search` | Query `~/.config/pkm-sync/archive.db` for Gmail messages via FTS4 or metadata |
+| `slack-search` | Query `~/.config/pkm-sync/slack.db` for Slack messages via LIKE |
+| `pkm-calendar` | View Google Calendar events via `pkm-sync calendar` |
+| `pkm-sync-data` | Run syncs, build vector index, semantic search via `pkm-sync` |
+| `pkm-config` | Manage configuration and OAuth setup via `pkm-sync config` / `pkm-sync setup` |
+
+### Keeping Documentation Up to Date
+
+**Before committing any changes**, review whether the changes affect this file (CLAUDE.md) or the skills below and update them accordingly.
+
+**This file (CLAUDE.md)** should be updated when:
+- New commands or subcommands are added
+- New sources or targets are implemented
+- Architecture or data flow changes
+- New dependencies are added
+- Build, test, or development workflow changes
+- Implementation status changes (mark items ✅ when complete)
+
+**Skills** should be updated when:
+
+- **New CLI flags or commands** → update `pkm-sync-data`, `pkm-calendar`, or `pkm-config` skills
+- **Database schema changes** (archive.db, slack.db) → update `email-search` or `slack-search` skills
+- **New source types** → add config templates to `pkm-config`, add sync examples to `pkm-sync-data`
+- **Changed command names or flags** → update the relevant skill's examples and flags reference
+- **New config options** → update YAML templates in `pkm-config`
+
+Skills are self-contained SKILL.md files — edit them directly:
+```
+~/.claude/skills/email-search/SKILL.md
+~/.claude/skills/slack-search/SKILL.md
+~/.claude/skills/pkm-calendar/SKILL.md
+~/.claude/skills/pkm-sync-data/SKILL.md
+~/.claude/skills/pkm-config/SKILL.md
+```

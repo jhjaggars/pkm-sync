@@ -108,6 +108,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		// slack uses its own pipeline (pkm-sync slack), not the general sync.
 		if sourceConfig.Type != "gmail" && sourceConfig.Type != "google_calendar" && sourceConfig.Type != "google_drive" {
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
 

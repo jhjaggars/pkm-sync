@@ -12,6 +12,7 @@ import (
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google"
+	slacksource "pkm-sync/internal/sources/slack"
 	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/transform"
 	"pkm-sync/pkg/interfaces"
@@ -60,8 +61,15 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 		}
 
 		return source, nil
+	case "slack":
+		source := slacksource.NewSlackSource(sourceID, sourceConfig)
+		if err := source.Configure(nil, nil); err != nil {
+			return nil, err
+		}
+
+		return source, nil
 	default:
-		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail', 'google_drive' (others like slack, jira are planned for future releases)", sourceConfig.Type)
+		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail', 'google_drive', 'slack' (others like jira are planned for future releases)", sourceConfig.Type)
 	}
 }
 

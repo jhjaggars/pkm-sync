@@ -234,18 +234,30 @@ type AppConfig struct {
 // Future source configurations (placeholders for planned integrations)
 
 type SlackSourceConfig struct {
-	// Workspace and channel settings
-	WorkspaceID    string   `json:"workspace_id"    yaml:"workspace_id"`
-	Channels       []string `json:"channels"        yaml:"channels"` // ["#general", "#dev"]
+	// Workspace settings
+	WorkspaceURL string `json:"workspace_url" yaml:"workspace_url"` // e.g. "https://myworkspace.slack.com"
+	APIUrl       string `json:"api_url"       yaml:"api_url"`       // optional Enterprise Grid override
+
+	// Channel settings
+	WorkspaceID    string   `json:"workspace_id"    yaml:"workspace_id"` // legacy field
+	Channels       []string `json:"channels"        yaml:"channels"`     // ["general", "engineering"]
 	IncludeThreads bool     `json:"include_threads" yaml:"include_threads"`
 	IncludeDMs     bool     `json:"include_dms"     yaml:"include_dms"`
 	MinImportance  string   `json:"min_importance"  yaml:"min_importance"` // "starred", "mentions", "all"
+
+	// Thread settings: "individual", "consolidated", "summary"
+	ThreadMode          string `json:"thread_mode"           yaml:"thread_mode"`
+	ThreadSummaryLength int    `json:"thread_summary_length" yaml:"thread_summary_length"`
 
 	// Content filtering
 	ExcludeBots  bool     `json:"exclude_bots"  yaml:"exclude_bots"`
 	MinLength    int      `json:"min_length"    yaml:"min_length"` // Minimum message length
 	IncludeFiles bool     `json:"include_files" yaml:"include_files"`
 	FileTypes    []string `json:"file_types"    yaml:"file_types"` // ["pdf", "doc", "img"]
+
+	// Rate limiting and performance
+	RateLimitMs           int `json:"rate_limit_ms"            yaml:"rate_limit_ms"`
+	MaxMessagesPerChannel int `json:"max_messages_per_channel" yaml:"max_messages_per_channel"`
 }
 
 type GmailSourceConfig struct {
