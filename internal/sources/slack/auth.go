@@ -1,174 +1,148 @@
 package slack
 
 import (
+	"bufio"
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
 	"strings"
 	"time"
-
-	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/input"
-	"github.com/go-rod/rod/lib/launcher"
-	"github.com/go-rod/rod/lib/proto"
 )
+
+//go:embed playwright/auth.js
+var authScriptJS []byte
+
+//go:embed playwright/package.json
+var authScriptPackageJSON []byte
 
 // ProgressFunc is called with status updates during auth.
 type ProgressFunc func(step, message string)
 
-var tokenRegexp = regexp.MustCompile(`(?m)name="token"\r\n\r\n([^\r\n]+)`)
-
-// RunAuth opens a browser, waits for the user to log in to Slack, then
-// extracts the session token by intercepting API requests.
+// RunAuth shells out to a Node/Playwright script that opens a browser,
+// waits for the user to log in to Slack, and extracts the session token
+// by intercepting API requests. The token is saved to configDir.
 func RunAuth(workspaceURL, configDir string, progress ProgressFunc) (*TokenData, error) {
 	if progress == nil {
 		progress = func(_, _ string) {}
+	}
+
+	// Write the embedded auth script and package.json to a stable dir in configDir.
+	scriptDir := filepath.Join(configDir, "slack-auth")
+
+	if err := os.MkdirAll(scriptDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create auth script dir: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(scriptDir, "auth.js"), authScriptJS, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write auth.js: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(scriptDir, "package.json"), authScriptPackageJSON, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write package.json: %w", err)
+	}
+
+	// Install node_modules on first use (or after update).
+	nodeModules := filepath.Join(scriptDir, "node_modules", "playwright")
+
+	if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
+		progress("npm-install", "Installing Playwright (first time only, may take a minute)...")
+
+		npmCmd := exec.Command("npm", "install")
+		npmCmd.Dir = scriptDir
+
+		if out, err := npmCmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("npm install failed: %w\n%s", err, out)
+		}
+
+		progress("install-browsers", "Installing Playwright Chromium browser...")
+
+		npxCmd := exec.Command("npx", "playwright", "install", "chromium")
+		npxCmd.Dir = scriptDir
+
+		if out, err := npxCmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("playwright install chromium failed: %w\n%s", err, out)
+		}
 	}
 
 	profileDir := filepath.Join(configDir, "slack-browser-profile")
 
 	progress("launching", "Opening browser...")
 
-	u := launcher.NewUserMode().UserDataDir(profileDir).Set("no-sandbox").MustLaunch()
+	// Run the auth script. Token JSON goes to stdout; progress JSON lines go to stderr.
+	cmd := exec.Command("node", filepath.Join(scriptDir, "auth.js"), workspaceURL, profileDir)
+	cmd.Dir = scriptDir
 
-	browser := rod.New().ControlURL(u).MustConnect()
-	defer browser.MustClose()
+	var stdout strings.Builder
 
-	page := browser.MustPage(workspaceURL)
+	cmd.Stdout = &stdout
 
-	var capturedToken string
-
-	capturedCookies := make([]CookieEntry, 0)
-
-	// Intercept requests to capture the multipart form token
-	router := browser.HijackRequests()
-
-	if err := router.Add("*/api/conversations.history", proto.NetworkResourceTypeXHR, func(ctx *rod.Hijack) {
-		body := ctx.Request.Body()
-		if capturedToken == "" {
-			if m := tokenRegexp.FindStringSubmatch(body); len(m) > 1 {
-				capturedToken = strings.TrimSpace(m[1])
-				progress("token-captured", fmt.Sprintf("Captured token: %s...", capturedToken[:min(15, len(capturedToken))]))
-			}
-		}
-		ctx.ContinueRequest(&proto.FetchContinueRequest{})
-	}); err != nil {
-		return nil, fmt.Errorf("failed to add history hijack: %w", err)
-	}
-
-	if err := router.Add("*/api/conversations.replies", proto.NetworkResourceTypeXHR, func(ctx *rod.Hijack) {
-		body := ctx.Request.Body()
-		if capturedToken == "" {
-			if m := tokenRegexp.FindStringSubmatch(body); len(m) > 1 {
-				capturedToken = strings.TrimSpace(m[1])
-				progress("token-captured", fmt.Sprintf("Captured token: %s...", capturedToken[:min(15, len(capturedToken))]))
-			}
-		}
-		ctx.ContinueRequest(&proto.FetchContinueRequest{})
-	}); err != nil {
-		return nil, fmt.Errorf("failed to add replies hijack: %w", err)
-	}
-
-	go router.Run()
-
-	defer func() { _ = router.Stop() }()
-
-	progress("waiting", "Waiting for Slack workspace to load (please complete SSO if prompted)...")
-
-	if err := page.Timeout(120 * time.Second).WaitStable(2 * time.Second); err != nil {
-		return nil, fmt.Errorf("workspace did not load: %w", err)
-	}
-
-	// Wait for the sidebar (role="tree" is the channel list)
-	if _, err := page.Timeout(120 * time.Second).Element(`[role="tree"]`); err != nil {
-		return nil, fmt.Errorf("timed out waiting for Slack sidebar: %w", err)
-	}
-
-	progress("loaded", "Workspace loaded, triggering API call...")
-
-	// Trigger a conversations.history call by navigating to #general
-	// Use Cmd+K on macOS, Ctrl+K elsewhere
-	var modKey input.Key
-	if runtime.GOOS == "darwin" {
-		modKey = input.MetaLeft
-	} else {
-		modKey = input.ControlLeft
-	}
-
-	if err := page.KeyActions().Press(modKey, input.KeyK).Do(); err != nil {
-		return nil, fmt.Errorf("failed to open channel switcher: %w", err)
-	}
-
-	time.Sleep(500 * time.Millisecond)
-
-	if err := page.Keyboard.Type([]input.Key("general")...); err != nil {
-		return nil, fmt.Errorf("failed to type channel name: %w", err)
-	}
-
-	time.Sleep(1 * time.Second)
-
-	if err := page.Keyboard.Press(input.Enter); err != nil {
-		return nil, fmt.Errorf("failed to press enter: %w", err)
-	}
-
-	// Wait up to 10 seconds for the token to be captured
-	progress("waiting-token", "Waiting for API token...")
-
-	deadline := time.Now().Add(10 * time.Second)
-
-	for time.Now().Before(deadline) && capturedToken == "" {
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if capturedToken == "" {
-		return nil, fmt.Errorf("failed to capture API token — try navigating to a channel manually while the browser is open")
-	}
-
-	// Grab cookies
-	progress("cookies", "Capturing cookies...")
-
-	cookies, err := browser.GetCookies()
+	// Pipe stderr so we can forward progress messages in real time.
+	pr, pw, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cookies: %w", err)
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
-	cookieParts := make([]string, 0, len(cookies))
+	cmd.Stderr = pw
 
-	for _, c := range cookies {
-		ce := CookieEntry{
-			Name:     c.Name,
-			Value:    c.Value,
-			Domain:   c.Domain,
-			Path:     c.Path,
-			Expires:  float64(c.Expires),
-			HTTPOnly: c.HTTPOnly,
-			Secure:   c.Secure,
-			SameSite: string(c.SameSite),
+	if err := cmd.Start(); err != nil {
+		pw.Close()
+		pr.Close()
+
+		return nil, fmt.Errorf("failed to start auth script: %w", err)
+	}
+
+	// Parent closes the write end so the goroutine gets EOF when the child exits.
+	pw.Close()
+
+	// Forward progress JSON lines from stderr.
+	go func() {
+		defer pr.Close()
+
+		scanner := bufio.NewScanner(pr)
+
+		for scanner.Scan() {
+			var msg struct {
+				Step    string `json:"step"`
+				Message string `json:"message"`
+			}
+
+			if err := json.Unmarshal(scanner.Bytes(), &msg); err == nil {
+				progress(msg.Step, msg.Message)
+			}
 		}
-		capturedCookies = append(capturedCookies, ce)
-		cookieParts = append(cookieParts, c.Name+"="+c.Value)
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("auth script failed: %w", err)
 	}
 
-	cookieHeader := strings.Join(cookieParts, "; ")
+	// Parse token JSON written to stdout by the script.
+	var raw struct {
+		Token        string        `json:"token"`
+		Cookies      []CookieEntry `json:"cookies"`
+		CookieHeader string        `json:"cookie_header"`
+		Workspace    string        `json:"workspace"`
+	}
 
-	// Derive workspace name from URL
-	workspace := workspaceName(workspaceURL)
+	if err := json.Unmarshal([]byte(stdout.String()), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse token from auth script: %w", err)
+	}
 
 	td := &TokenData{
-		Token:        capturedToken,
-		Cookies:      capturedCookies,
-		CookieHeader: cookieHeader,
+		Token:        raw.Token,
+		Cookies:      raw.Cookies,
+		CookieHeader: raw.CookieHeader,
 		Timestamp:    time.Now(),
-		Workspace:    workspace,
+		Workspace:    raw.Workspace,
 	}
 
 	if err := SaveToken(configDir, td); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
-
-	progress("complete", "Authentication successful")
 
 	return td, nil
 }
@@ -181,7 +155,6 @@ func workspaceName(rawURL string) string {
 	}
 
 	host := u.Hostname()
-	// e.g. "myworkspace.slack.com" -> "myworkspace"
 	parts := strings.Split(host, ".")
 
 	if len(parts) > 0 {

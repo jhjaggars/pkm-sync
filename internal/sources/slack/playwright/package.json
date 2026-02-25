@@ -1,0 +1,9 @@
+{
+  "name": "pkm-sync-slack-auth",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright-based Slack token extraction for pkm-sync",
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
