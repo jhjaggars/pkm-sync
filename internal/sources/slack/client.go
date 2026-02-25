@@ -160,6 +160,47 @@ func (c *Client) bootData() (map[string]any, error) {
 	})
 }
 
+// BootKeys returns the top-level keys from the client.userBoot response.
+// Useful for diagnosing Enterprise Slack response layouts.
+func (c *Client) BootKeys() ([]string, error) {
+	boot, err := c.bootData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get boot data: %w", err)
+	}
+
+	keys := make([]string, 0, len(boot))
+	for k := range boot {
+		keys = append(keys, k)
+	}
+
+	return keys, nil
+}
+
+// BootChannelSample returns up to n raw channel objects from the boot response.
+// Useful for inspecting the raw channel structure returned by the API.
+func (c *Client) BootChannelSample(n int) ([]map[string]any, error) {
+	boot, err := c.bootData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get boot data: %w", err)
+	}
+
+	raw, _ := boot["channels"].([]any)
+
+	if n > len(raw) {
+		n = len(raw)
+	}
+
+	samples := make([]map[string]any, 0, n)
+
+	for _, item := range raw[:n] {
+		if m, ok := item.(map[string]any); ok {
+			samples = append(samples, m)
+		}
+	}
+
+	return samples, nil
+}
+
 // GetChannels returns all channels and groups from the workspace.
 func (c *Client) GetChannels() ([]SlackChannel, error) {
 	boot, err := c.bootData()
