@@ -147,8 +147,8 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 	return allItems, nil
 }
 
-// fetchChannel fetches all messages for a channel and returns one daily-note FullItem per calendar day.
-// Thread replies are fetched and embedded inline within each daily note.
+// fetchChannel fetches all messages for a channel and returns individual FullItem per message.
+// Thread replies are fetched and appended as individual items when IncludeThreads is set.
 func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages int) ([]models.FullItem, error) {
 	channelName := ch.Name
 	if ch.IsIM && channelName == "" {
@@ -190,8 +190,7 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 		time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
 	}
 
-	// Filter, resolve authors, and fetch thread replies.
-	entries := make([]messageEntry, 0, len(rawMsgs))
+	items := make([]models.FullItem, 0, len(rawMsgs))
 
 	for i := range rawMsgs {
 		msg := &rawMsgs[i]
@@ -204,76 +203,63 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 			continue
 		}
 
+		// Apply min_length filter only to top-level messages, not replies.
 		content := ExtractMessageText(msg)
 		if s.cfg.MinLength > 0 && len(strings.TrimSpace(content)) < s.cfg.MinLength {
 			continue
 		}
 
-		entry := messageEntry{
-			msg:    *msg,
-			author: resolveAuthor(msg, s.userCache, s.client),
-		}
-
-		// Fetch and embed thread replies inline.
-		isThreadRoot := msg.ThreadTs == msg.Ts && msg.ReplyCount > 0
-
-		if s.cfg.IncludeThreads && isThreadRoot {
-			replies, err := s.client.GetReplies(ch.ID, msg.Ts)
-			if err != nil {
-				fmt.Printf("Warning: failed to fetch thread replies for %s: %v\n", msg.Ts, err)
-			} else {
-				for j := range replies {
-					if replies[j].Ts == msg.Ts {
-						continue // skip parent included in reply list
-					}
-
-					entry.replies = append(entry.replies, replyEntry{
-						msg:    replies[j],
-						author: resolveAuthor(&replies[j], s.userCache, s.client),
-					})
-				}
-			}
-
-			time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
-		}
-
-		entries = append(entries, entry)
-	}
-
-	// Group entries by calendar date (UTC).
-	byDate := make(map[string][]messageEntry)
-
-	var dateOrder []string
-
-	seen := make(map[string]bool)
-
-	for _, e := range entries {
-		dateStr := tsToTime(e.msg.Ts).UTC().Format("2006-01-02")
-		if !seen[dateStr] {
-			dateOrder = append(dateOrder, dateStr)
-			seen[dateStr] = true
-		}
-
-		byDate[dateStr] = append(byDate[dateStr], e)
-	}
-
-	// Build one daily note per date, preserving chronological order.
-	items := make([]models.FullItem, 0, len(byDate))
-
-	for _, dateStr := range dateOrder {
-		date, _ := time.Parse("2006-01-02", dateStr)
-		item := BuildDailyNote(date, byDate[dateStr], ch.ID, channelName, s.cfg.WorkspaceURL)
+		author := resolveAuthor(msg, s.userCache, s.client)
+		item := FromSlackMessage(msg, ch.ID, channelName, s.cfg.WorkspaceURL, author, false)
 
 		// Tag DMs additionally.
 		if ch.IsIM {
-			tags := item.GetTags()
-			item.SetTags(append(tags, fmt.Sprintf("dm:%s", channelName)))
+			item.Tags = append(item.Tags, fmt.Sprintf("dm:%s", channelName))
 		}
 
 		items = append(items, item)
+
+		// Fetch and append thread replies as individual items.
+		isThreadRoot := msg.ThreadTs == msg.Ts && msg.ReplyCount > 0
+
+		if s.cfg.IncludeThreads && isThreadRoot {
+			replyItems := s.fetchReplies(ch, msg, channelName)
+			items = append(items, replyItems...)
+
+			time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
+		}
 	}
 
 	return items, nil
+}
+
+// fetchReplies fetches thread replies for a message and returns them as individual items.
+func (s *SlackSource) fetchReplies(ch SlackChannel, msg *RawMessage, channelName string) []models.FullItem {
+	replies, err := s.client.GetReplies(ch.ID, msg.Ts)
+	if err != nil {
+		fmt.Printf("Warning: failed to fetch thread replies for %s: %v\n", msg.Ts, err)
+
+		return nil
+	}
+
+	items := make([]models.FullItem, 0, len(replies))
+
+	for j := range replies {
+		if replies[j].Ts == msg.Ts {
+			continue // skip parent included in reply list
+		}
+
+		replyAuthor := resolveAuthor(&replies[j], s.userCache, s.client)
+		replyItem := FromSlackMessage(&replies[j], ch.ID, channelName, s.cfg.WorkspaceURL, replyAuthor, true)
+
+		if ch.IsIM {
+			replyItem.Tags = append(replyItem.Tags, fmt.Sprintf("dm:%s", channelName))
+		}
+
+		items = append(items, replyItem)
+	}
+
+	return items
 }
 
 // resolveAuthor returns the best display name for a message sender.

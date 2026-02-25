@@ -10,19 +10,6 @@ import (
 	"pkm-sync/pkg/models"
 )
 
-// messageEntry holds a top-level Slack message with its resolved author and any thread replies.
-type messageEntry struct {
-	msg     RawMessage
-	author  string
-	replies []replyEntry
-}
-
-// replyEntry holds a single thread reply with its resolved author.
-type replyEntry struct {
-	msg    RawMessage
-	author string
-}
-
 // ExtractMessageText walks rich_text blocks or falls back to the text field.
 func ExtractMessageText(msg *RawMessage) string {
 	if len(msg.Blocks) > 0 {
@@ -86,69 +73,74 @@ func messageURL(workspaceURL, channelID, ts string) string {
 	return fmt.Sprintf("%s/archives/%s/p%s", strings.TrimRight(workspaceURL, "/"), channelID, tsNoDecimal)
 }
 
-// formatTime formats a Slack timestamp as "HH:MM" in UTC.
-func formatTime(ts string) string {
-	return tsToTime(ts).UTC().Format("15:04")
-}
+// FromSlackMessage converts a raw Slack message into an individual *models.BasicItem.
+// isReply indicates whether the message is a thread reply (as opposed to a top-level message).
+func FromSlackMessage(
+	msg *RawMessage, channelID, channelName, workspaceURL, author string, isReply bool,
+) *models.BasicItem {
+	content := ExtractMessageText(msg)
 
-// BuildDailyNote aggregates all messages for a channel on a given day into a single FullItem.
-// Threads are rendered inline — replies appear indented under the parent message.
-func BuildDailyNote(
-	date time.Time, entries []messageEntry, channelID, channelName, workspaceURL string,
-) models.FullItem {
-	dateStr := date.Format("2006-01-02")
-	title := fmt.Sprintf("%s \u2014 %s", channelName, dateStr)
+	// Build title: first 80 chars of content, or fallback to channel name.
+	title := content
+	if len(title) > 80 {
+		title = title[:80]
+	}
 
-	var sb strings.Builder
+	if strings.TrimSpace(title) == "" {
+		title = fmt.Sprintf("[slack] #%s", channelName)
+	}
 
-	sb.WriteString(fmt.Sprintf("# #%s \u2014 %s\n\n", channelName, dateStr))
+	itemType := "slack_message"
+	if isReply {
+		itemType = "slack_reply"
+	}
 
-	for i, entry := range entries {
-		content := ExtractMessageText(&entry.msg)
-		url := messageURL(workspaceURL, channelID, entry.msg.Ts)
-		t := formatTime(entry.msg.Ts)
+	ts := tsToTime(msg.Ts)
 
-		sb.WriteString(fmt.Sprintf("**%s** \u00b7 [%s](%s)\n", entry.author, t, url))
+	tags := []string{"slack", fmt.Sprintf("channel:%s", channelName)}
 
-		if content != "" {
-			sb.WriteString(content)
-			sb.WriteString("\n")
-		}
+	url := messageURL(workspaceURL, channelID, msg.Ts)
+	links := []models.Link{
+		{
+			URL:   url,
+			Title: fmt.Sprintf("Slack message in #%s", channelName),
+			Type:  "external",
+		},
+	}
 
-		if len(entry.replies) > 0 {
-			sb.WriteString("\n")
+	threadTs := ""
+	isThreadRoot := false
 
-			for _, reply := range entry.replies {
-				replyContent := ExtractMessageText(&reply.msg)
-				replyTime := formatTime(reply.msg.Ts)
-				sb.WriteString(fmt.Sprintf("> **%s** \u00b7 %s \u2014 %s\n", reply.author, replyTime, replyContent))
-			}
-		}
-
-		if i < len(entries)-1 {
-			sb.WriteString("\n---\n\n")
+	if isReply {
+		threadTs = msg.ThreadTs
+		isThreadRoot = false
+	} else {
+		isThreadRoot = msg.ThreadTs == msg.Ts && msg.ReplyCount > 0
+		if isThreadRoot {
+			threadTs = msg.ThreadTs
 		}
 	}
 
-	dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
-
 	return &models.BasicItem{
-		ID:         fmt.Sprintf("slack_daily_%s_%s", channelID, dateStr),
-		Title:      title,
-		Content:    sb.String(),
-		SourceType: "slack",
-		ItemType:   "slack_daily",
-		CreatedAt:  dayStart,
-		UpdatedAt:  dayStart,
-		Tags:       []string{"slack", fmt.Sprintf("channel:%s", channelName)},
-		Metadata: map[string]any{
-			"channel":       channelName,
-			"channel_id":    channelID,
-			"workspace":     workspaceURL,
-			"date":          dateStr,
-			"message_count": len(entries),
-		},
-		Links:       []models.Link{},
+		ID:          fmt.Sprintf("slack_%s_%s", channelID, msg.Ts),
+		Title:       title,
+		Content:     content,
+		SourceType:  "slack",
+		ItemType:    itemType,
+		CreatedAt:   ts,
+		UpdatedAt:   ts,
+		Tags:        tags,
+		Links:       links,
 		Attachments: []models.Attachment{},
+		Metadata: map[string]any{
+			"channel":        channelName,
+			"channel_id":     channelID,
+			"workspace":      workspaceURL,
+			"author":         author,
+			"ts":             msg.Ts,
+			"thread_ts":      threadTs,
+			"is_thread_root": isThreadRoot,
+			"reply_count":    msg.ReplyCount,
+		},
 	}
 }
