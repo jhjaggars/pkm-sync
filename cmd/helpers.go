@@ -14,8 +14,6 @@ import (
 	"pkm-sync/internal/sources/google"
 	slacksource "pkm-sync/internal/sources/slack"
 	syncer "pkm-sync/internal/sync"
-	"pkm-sync/internal/targets/logseq"
-	"pkm-sync/internal/targets/obsidian"
 	"pkm-sync/internal/transform"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
@@ -75,63 +73,26 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 	}
 }
 
-// createTarget creates a named target without config.
-func createTarget(name string) (interfaces.Target, error) {
-	switch name {
-	case "obsidian":
-		target := obsidian.NewObsidianTarget()
-		if err := target.Configure(nil); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-	case "logseq":
-		target := logseq.NewLogseqTarget()
-		if err := target.Configure(nil); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-	default:
-		return nil, fmt.Errorf("unknown target '%s': supported targets are 'obsidian' and 'logseq'", name)
-	}
+// createFileSink creates a FileSink for the given formatter name and output directory.
+func createFileSink(name string, outputDir string) (*sinks.FileSink, error) {
+	return sinks.NewFileSink(name, outputDir, nil)
 }
 
-// createTargetWithConfig creates a target configured from the application config.
-func createTargetWithConfig(name string, cfg *models.Config) (interfaces.Target, error) {
-	switch name {
-	case "obsidian":
-		target := obsidian.NewObsidianTarget()
+// createFileSinkWithConfig creates a FileSink configured from the application config.
+func createFileSinkWithConfig(name string, outputDir string, cfg *models.Config) (*sinks.FileSink, error) {
+	config := make(map[string]any)
 
-		configMap := make(map[string]any)
-		if targetConfig, exists := cfg.Targets[name]; exists {
-			configMap["template_dir"] = targetConfig.Obsidian.DefaultFolder
-			configMap["daily_notes_format"] = targetConfig.Obsidian.DateFormat
+	if targetConfig, exists := cfg.Targets[name]; exists {
+		switch name {
+		case "obsidian":
+			config["template_dir"] = targetConfig.Obsidian.DefaultFolder
+			config["daily_notes_format"] = targetConfig.Obsidian.DateFormat
+		case "logseq":
+			config["default_page"] = targetConfig.Logseq.DefaultPage
 		}
-
-		if err := target.Configure(configMap); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-
-	case "logseq":
-		target := logseq.NewLogseqTarget()
-
-		configMap := make(map[string]any)
-		if targetConfig, exists := cfg.Targets[name]; exists {
-			configMap["default_page"] = targetConfig.Logseq.DefaultPage
-		}
-
-		if err := target.Configure(configMap); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-
-	default:
-		return nil, fmt.Errorf("unknown target '%s': supported targets are 'obsidian' and 'logseq'", name)
 	}
+
+	return sinks.NewFileSink(name, outputDir, config)
 }
 
 // parseSinceTime delegates to the unified date parser.
@@ -378,11 +339,6 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		return fmt.Errorf("no valid %s sources could be initialized", ssc.SourceKind)
 	}
 
-	target, err := createTargetWithConfig(ssc.TargetName, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create target: %w", err)
-	}
-
 	// Apply output_subdir: use the common subdir if all sources agree, else warn and use base dir.
 	effectiveOutputDir := ssc.OutputDir
 	if len(entries) == 1 {
@@ -406,7 +362,11 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		}
 	}
 
-	fileSink := sinks.NewFileSink(target, effectiveOutputDir)
+	fileSink, err := createFileSinkWithConfig(ssc.TargetName, effectiveOutputDir, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create sink: %w", err)
+	}
+
 	sinksSlice := []interfaces.Sink{fileSink}
 
 	vectorSink, err := maybeCreateVectorSink(cfg)
@@ -463,7 +423,7 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	}
 
 	if ssc.DryRun {
-		previews, err := target.Preview(syncResult.Items, ssc.OutputDir)
+		previews, err := fileSink.Preview(syncResult.Items)
 		if err != nil {
 			return fmt.Errorf("failed to generate preview: %w", err)
 		}

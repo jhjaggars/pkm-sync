@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -32,42 +33,25 @@ func (m *MockSource) SupportsRealtime() bool {
 	return false
 }
 
-// MockTarget implements interfaces.Target for testing pipeline integration.
-type MockTarget struct {
-	exportedItems []models.FullItem
+// MockSink captures written items for assertion.
+type MockSink struct {
+	writtenItems []models.FullItem
 }
 
-func (m *MockTarget) Name() string {
-	return "mock_target"
+func (m *MockSink) Name() string {
+	return "mock_sink"
 }
 
-func (m *MockTarget) Configure(config map[string]interface{}) error {
-	return nil
-}
-
-func (m *MockTarget) Export(items []models.FullItem, outputDir string) error {
-	m.exportedItems = items
+func (m *MockSink) Write(_ context.Context, items []models.FullItem) error {
+	m.writtenItems = items
 
 	return nil
 }
 
-func (m *MockTarget) FormatFilename(title string) string {
-	return title + ".md"
-}
+// Ensure MockSink implements Sink.
+var _ interfaces.Sink = (*MockSink)(nil)
 
-func (m *MockTarget) GetFileExtension() string {
-	return ".md"
-}
-
-func (m *MockTarget) FormatMetadata(metadata map[string]interface{}) string {
-	return ""
-}
-
-func (m *MockTarget) Preview(items []models.FullItem, outputDir string) ([]*interfaces.FilePreview, error) {
-	return nil, nil
-}
-
-// TestPipelineIntegrationWithSyncEngine tests the complete flow from source -> pipeline -> target.
+// TestPipelineIntegrationWithSyncEngine tests the complete flow from source -> pipeline -> sink.
 func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 	// Create test items with content that will trigger transformations
 	testItems := []models.FullItem{
@@ -91,9 +75,9 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 		}(),
 	}
 
-	// Create mock source and target
+	// Create mock source and sink
 	source := &MockSource{items: testItems}
-	target := &MockTarget{}
+	sink := &MockSink{}
 
 	// Create and configure the transform pipeline
 	pipeline := NewPipeline()
@@ -108,7 +92,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 	pipeline.AddTransformer(filter)
 
 	// Configure the pipeline
-	config := models.TransformConfig{
+	transformCfg := models.TransformConfig{
 		Enabled:       true,
 		PipelineOrder: []string{"content_cleanup", "auto_tagging", "filter"},
 		ErrorStrategy: "log_and_continue",
@@ -131,33 +115,35 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 		},
 	}
 
-	err := pipeline.Configure(config)
+	err := pipeline.Configure(transformCfg)
 	if err != nil {
 		t.Fatalf("Failed to configure pipeline: %v", err)
 	}
 
-	// Create syncer with pipeline
-	syncer := sync.NewSyncerWithPipeline(pipeline)
+	// Create multi-syncer with pipeline and run sync
+	ms := sync.NewMultiSyncer(pipeline)
 
-	// Execute sync
-	syncOptions := interfaces.SyncOptions{
-		Since:     time.Now().Add(-24 * time.Hour),
-		OutputDir: "/tmp/test",
-		DryRun:    false,
-		Overwrite: true,
-	}
-
-	err = syncer.Sync(source, target, syncOptions)
+	result, err := ms.SyncAll(
+		context.Background(),
+		[]sync.SourceEntry{{Name: "test_source", Src: source}},
+		[]interfaces.Sink{sink},
+		sync.MultiSyncOptions{
+			DefaultSince: time.Now().Add(-24 * time.Hour),
+			TransformCfg: transformCfg,
+		},
+	)
 	if err != nil {
-		t.Fatalf("Sync failed: %v", err)
+		t.Fatalf("SyncAll failed: %v", err)
 	}
 
 	// Verify the results
-	if len(target.exportedItems) != 1 {
-		t.Fatalf("Expected 1 item to be exported after filtering, got %d", len(target.exportedItems))
+	if len(sink.writtenItems) != 1 {
+		t.Fatalf("Expected 1 item to be written after filtering, got %d", len(sink.writtenItems))
 	}
 
-	exportedItem := target.exportedItems[0]
+	_ = result // result.Items also has the filtered list
+
+	exportedItem := sink.writtenItems[0]
 
 	// Verify content cleanup worked
 	if exportedItem.GetTitle() != "Important Meeting" {
@@ -183,7 +169,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 	}
 
 	// Verify filter worked (second item should be filtered out due to short content)
-	if len(target.exportedItems) > 1 {
+	if len(sink.writtenItems) > 1 {
 		t.Error("Filter should have removed the short content item")
 	}
 }
@@ -203,7 +189,7 @@ func TestPipelineIntegrationErrorHandling(t *testing.T) {
 	}
 
 	source := &MockSource{items: testItems}
-	target := &MockTarget{}
+	sink := &MockSink{}
 
 	// Create pipeline with a failing transformer
 	pipeline := NewPipeline()
@@ -213,44 +199,45 @@ func TestPipelineIntegrationErrorHandling(t *testing.T) {
 	pipeline.AddTransformer(failingTransformer)
 	pipeline.AddTransformer(workingTransformer)
 
-	config := models.TransformConfig{
+	transformCfg := models.TransformConfig{
 		Enabled:       true,
 		PipelineOrder: []string{"failing_transformer", "working_transformer"},
 		ErrorStrategy: "log_and_continue",
 		Transformers:  make(map[string]map[string]interface{}),
 	}
 
-	err := pipeline.Configure(config)
+	err := pipeline.Configure(transformCfg)
 	if err != nil {
 		t.Fatalf("Failed to configure pipeline: %v", err)
 	}
 
-	syncer := sync.NewSyncerWithPipeline(pipeline)
-
-	syncOptions := interfaces.SyncOptions{
-		Since:     time.Now().Add(-24 * time.Hour),
-		OutputDir: "/tmp/test",
-		DryRun:    false,
-		Overwrite: true,
-	}
+	ms := sync.NewMultiSyncer(pipeline)
 
 	// This should not fail despite the failing transformer
-	err = syncer.Sync(source, target, syncOptions)
+	_, err = ms.SyncAll(
+		context.Background(),
+		[]sync.SourceEntry{{Name: "test_source", Src: source}},
+		[]interfaces.Sink{sink},
+		sync.MultiSyncOptions{
+			DefaultSince: time.Now().Add(-24 * time.Hour),
+			TransformCfg: transformCfg,
+		},
+	)
 	if err != nil {
-		t.Fatalf("Sync should not fail with log_and_continue strategy: %v", err)
+		t.Fatalf("SyncAll should not fail with log_and_continue strategy: %v", err)
 	}
 
-	// Verify items were still exported
-	if len(target.exportedItems) != 1 {
-		t.Fatalf("Expected 1 item to be exported, got %d", len(target.exportedItems))
+	// Verify items were still written
+	if len(sink.writtenItems) != 1 {
+		t.Fatalf("Expected 1 item to be written, got %d", len(sink.writtenItems))
 	}
 
 	// Verify the working transformer processed the item
-	exportedItem := target.exportedItems[0]
+	writtenItem := sink.writtenItems[0]
 	hasWorkingTag := false
 	hasFailingTag := false
 
-	for _, tag := range exportedItem.GetTags() {
+	for _, tag := range writtenItem.GetTags() {
 		if tag == "transformed_by_working_transformer" {
 			hasWorkingTag = true
 		}
