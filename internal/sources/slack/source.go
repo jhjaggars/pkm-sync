@@ -77,6 +77,11 @@ func (s *SlackSource) Configure(_ map[string]any, _ *http.Client) error {
 	return nil
 }
 
+// Client returns the underlying API client (used for diagnostics).
+func (s *SlackSource) Client() *Client {
+	return s.client
+}
+
 // SupportsRealtime implements interfaces.Source.
 func (s *SlackSource) SupportsRealtime() bool {
 	return false
@@ -100,11 +105,10 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 
 	var allItems []models.FullItem
 
-	// Resolve configured channels
-	channelNames := s.cfg.Channels
-	channelsToSync := make([]SlackChannel, 0, len(channelNames))
+	// Resolve configured channels.
+	channelsToSync := make([]SlackChannel, 0, len(s.cfg.Channels))
 
-	for _, name := range channelNames {
+	for _, name := range s.cfg.Channels {
 		ch, err := s.client.FindChannel(name)
 		if err != nil {
 			fmt.Printf("Warning: could not find Slack channel #%s: %v\n", name, err)
@@ -115,7 +119,7 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 		channelsToSync = append(channelsToSync, *ch)
 	}
 
-	// Optionally include DMs
+	// Optionally include DMs.
 	if s.cfg.IncludeDMs {
 		dms, err := s.client.GetDMs()
 		if err != nil {
@@ -143,14 +147,15 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 	return allItems, nil
 }
 
-// fetchChannel fetches messages from a single channel or DM.
+// fetchChannel fetches all messages for a channel and returns one daily-note FullItem per calendar day.
+// Thread replies are fetched and embedded inline within each daily note.
 func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages int) ([]models.FullItem, error) {
 	channelName := ch.Name
 	if ch.IsIM && channelName == "" {
-		// For DMs, resolve the other user's name
 		channelName = s.userCache.ResolveUser(ch.User, s.client)
 	}
 
+	// Paginate through message history.
 	pageSize := 200
 	cursor := ""
 
@@ -185,100 +190,105 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 		time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
 	}
 
-	items := make([]models.FullItem, 0, len(rawMsgs))
+	// Filter, resolve authors, and fetch thread replies.
+	entries := make([]messageEntry, 0, len(rawMsgs))
 
 	for i := range rawMsgs {
 		msg := &rawMsgs[i]
 
-		// Skip system messages
 		if systemSubtypes[msg.Subtype] {
 			continue
 		}
 
-		// Skip bots if configured
 		if s.cfg.ExcludeBots && (msg.BotID != "" || msg.Subtype == "bot_message") {
 			continue
 		}
 
 		content := ExtractMessageText(msg)
-
-		// Skip short messages
 		if s.cfg.MinLength > 0 && len(strings.TrimSpace(content)) < s.cfg.MinLength {
 			continue
 		}
 
-		// Resolve author
-		authorName := msg.User
-		if authorName == "" {
-			authorName = msg.Username
+		entry := messageEntry{
+			msg:    *msg,
+			author: resolveAuthor(msg, s.userCache, s.client),
 		}
 
-		if authorName == "" {
-			authorName = msg.BotID
-		}
-
-		if msg.User != "" {
-			authorName = s.userCache.ResolveUser(msg.User, s.client)
-		}
-
-		// Fetch thread replies if this is a thread root
+		// Fetch and embed thread replies inline.
 		isThreadRoot := msg.ThreadTs == msg.Ts && msg.ReplyCount > 0
 
-		threadItems := s.processMessage(msg, ch.ID, channelName, authorName, isThreadRoot)
-		items = append(items, threadItems...)
+		if s.cfg.IncludeThreads && isThreadRoot {
+			replies, err := s.client.GetReplies(ch.ID, msg.Ts)
+			if err != nil {
+				fmt.Printf("Warning: failed to fetch thread replies for %s: %v\n", msg.Ts, err)
+			} else {
+				for j := range replies {
+					if replies[j].Ts == msg.Ts {
+						continue // skip parent included in reply list
+					}
+
+					entry.replies = append(entry.replies, replyEntry{
+						msg:    replies[j],
+						author: resolveAuthor(&replies[j], s.userCache, s.client),
+					})
+				}
+			}
+
+			time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
+		}
+
+		entries = append(entries, entry)
 	}
 
-	// Tag DMs with the other user's name
-	if ch.IsIM {
-		for _, item := range items {
-			tags := item.GetTags()
-			tags = append(tags, fmt.Sprintf("dm:%s", channelName))
-			item.SetTags(tags)
+	// Group entries by calendar date (UTC).
+	byDate := make(map[string][]messageEntry)
+
+	var dateOrder []string
+
+	seen := make(map[string]bool)
+
+	for _, e := range entries {
+		dateStr := tsToTime(e.msg.Ts).UTC().Format("2006-01-02")
+		if !seen[dateStr] {
+			dateOrder = append(dateOrder, dateStr)
+			seen[dateStr] = true
 		}
+
+		byDate[dateStr] = append(byDate[dateStr], e)
+	}
+
+	// Build one daily note per date, preserving chronological order.
+	items := make([]models.FullItem, 0, len(byDate))
+
+	for _, dateStr := range dateOrder {
+		date, _ := time.Parse("2006-01-02", dateStr)
+		item := BuildDailyNote(date, byDate[dateStr], ch.ID, channelName, s.cfg.WorkspaceURL)
+
+		// Tag DMs additionally.
+		if ch.IsIM {
+			tags := item.GetTags()
+			item.SetTags(append(tags, fmt.Sprintf("dm:%s", channelName)))
+		}
+
+		items = append(items, item)
 	}
 
 	return items, nil
 }
 
-// processMessage converts a single raw message into FullItems, fetching thread replies when applicable.
-func (s *SlackSource) processMessage(
-	msg *RawMessage, channelID, channelName, authorName string, isThreadRoot bool,
-) []models.FullItem {
-	if !s.cfg.IncludeThreads || !isThreadRoot {
-		return []models.FullItem{FromSlackMessage(msg, channelID, channelName, s.cfg.WorkspaceURL, authorName)}
+// resolveAuthor returns the best display name for a message sender.
+func resolveAuthor(msg *RawMessage, cache *UserCache, client *Client) string {
+	if msg.User != "" {
+		return cache.ResolveUser(msg.User, client)
 	}
 
-	replies, err := s.client.GetReplies(channelID, msg.Ts)
-	if err != nil {
-		fmt.Printf("Warning: failed to fetch thread replies: %v\n", err)
-
-		return []models.FullItem{FromSlackMessage(msg, channelID, channelName, s.cfg.WorkspaceURL, authorName)}
+	if msg.Username != "" {
+		return msg.Username
 	}
 
-	time.Sleep(time.Duration(s.rateLimitMs) * time.Millisecond)
-
-	switch s.cfg.ThreadMode {
-	case "consolidated":
-		thread := FromSlackThread(msg, replies, channelID, channelName, s.cfg.WorkspaceURL, authorName, s.userCache, s.client)
-
-		return []models.FullItem{thread}
-
-	case "summary":
-		summaryLength := s.cfg.ThreadSummaryLength
-		if summaryLength <= 0 {
-			summaryLength = 5
-		}
-
-		if len(replies) > summaryLength+1 {
-			replies = replies[:summaryLength+1]
-		}
-
-		thread := FromSlackThread(msg, replies, channelID, channelName, s.cfg.WorkspaceURL, authorName, s.userCache, s.client)
-		thread.SetItemType("slack_thread_summary")
-
-		return []models.FullItem{thread}
-
-	default: // "individual" or unset
-		return []models.FullItem{FromSlackMessage(msg, channelID, channelName, s.cfg.WorkspaceURL, authorName)}
+	if msg.BotID != "" {
+		return msg.BotID
 	}
+
+	return "Unknown"
 }

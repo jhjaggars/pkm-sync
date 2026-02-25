@@ -10,6 +10,19 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// messageEntry holds a top-level Slack message with its resolved author and any thread replies.
+type messageEntry struct {
+	msg     RawMessage
+	author  string
+	replies []replyEntry
+}
+
+// replyEntry holds a single thread reply with its resolved author.
+type replyEntry struct {
+	msg    RawMessage
+	author string
+}
+
 // ExtractMessageText walks rich_text blocks or falls back to the text field.
 func ExtractMessageText(msg *RawMessage) string {
 	if len(msg.Blocks) > 0 {
@@ -73,144 +86,69 @@ func messageURL(workspaceURL, channelID, ts string) string {
 	return fmt.Sprintf("%s/archives/%s/p%s", strings.TrimRight(workspaceURL, "/"), channelID, tsNoDecimal)
 }
 
-// FromSlackMessage converts a RawMessage to a models.FullItem.
-func FromSlackMessage(msg *RawMessage, channelID, channelName, workspaceURL, authorName string) models.FullItem {
-	id := fmt.Sprintf("slack_%s_%s", channelID, msg.Ts)
-	t := tsToTime(msg.Ts)
-	content := ExtractMessageText(msg)
-
-	title := content
-	if len(title) > 80 {
-		title = title[:80]
-	}
-
-	if title == "" {
-		title = fmt.Sprintf("Slack message in #%s", channelName)
-	}
-
-	item := &models.BasicItem{
-		ID:         id,
-		Title:      title,
-		Content:    content,
-		SourceType: "slack",
-		ItemType:   "message",
-		CreatedAt:  t,
-		UpdatedAt:  t,
-		Tags:       []string{"slack", fmt.Sprintf("channel:%s", channelName)},
-		Metadata: map[string]any{
-			"channel":    channelName,
-			"channel_id": channelID,
-			"workspace":  workspaceURL,
-			"ts":         msg.Ts,
-			"author":     authorName,
-		},
-		Links: []models.Link{
-			{
-				URL:   messageURL(workspaceURL, channelID, msg.Ts),
-				Title: "Slack Message",
-				Type:  "source",
-			},
-		},
-		Attachments: []models.Attachment{},
-	}
-
-	return item
+// formatTime formats a Slack timestamp as "HH:MM" in UTC.
+func formatTime(ts string) string {
+	return tsToTime(ts).UTC().Format("15:04")
 }
 
-// FromSlackThread converts a parent message and its replies into a models.Thread.
-func FromSlackThread(
-	parent *RawMessage, replies []RawMessage,
-	channelID, channelName, workspaceURL, authorName string,
-	userCache *UserCache, client *Client,
-) *models.Thread {
-	parentText := ExtractMessageText(parent)
+// BuildDailyNote aggregates all messages for a channel on a given day into a single FullItem.
+// Threads are rendered inline — replies appear indented under the parent message.
+func BuildDailyNote(
+	date time.Time, entries []messageEntry, channelID, channelName, workspaceURL string,
+) models.FullItem {
+	dateStr := date.Format("2006-01-02")
+	title := fmt.Sprintf("%s \u2014 %s", channelName, dateStr)
 
-	threadTitle := parentText
-	if len(threadTitle) > 60 {
-		threadTitle = threadTitle[:60]
-	}
-
-	thread := models.NewThread(
-		fmt.Sprintf("slack_thread_%s_%s", channelID, parent.Ts),
-		fmt.Sprintf("Thread in #%s: %s", channelName, threadTitle),
-	)
-
-	thread.SourceType = "slack"
-	thread.ItemType = "slack_thread"
-	thread.CreatedAt = tsToTime(parent.Ts)
-	thread.UpdatedAt = tsToTime(parent.Ts)
-	thread.Tags = []string{"slack", fmt.Sprintf("channel:%s", channelName)}
-	thread.Metadata = map[string]any{
-		"channel":      channelName,
-		"channel_id":   channelID,
-		"workspace":    workspaceURL,
-		"ts":           parent.Ts,
-		"author":       authorName,
-		"reply_count":  parent.ReplyCount,
-		"participants": collectParticipants(parent, replies),
-	}
-	thread.Links = []models.Link{
-		{
-			URL:   messageURL(workspaceURL, channelID, parent.Ts),
-			Title: "Slack Thread",
-			Type:  "source",
-		},
-	}
-
-	// Add parent as first message
-	thread.AddMessage(FromSlackMessage(parent, channelID, channelName, workspaceURL, authorName))
-
-	// Add replies (skip parent message if included in replies list)
-	for i := range replies {
-		if replies[i].Ts == parent.Ts {
-			continue
-		}
-
-		replyAuthor := replies[i].User
-
-		if replyAuthor == "" {
-			replyAuthor = replies[i].Username
-		}
-
-		if replyAuthor == "" {
-			replyAuthor = replies[i].BotID
-		}
-
-		if replies[i].User != "" && client != nil && userCache != nil {
-			replyAuthor = userCache.ResolveUser(replies[i].User, client)
-		}
-
-		thread.AddMessage(FromSlackMessage(&replies[i], channelID, channelName, workspaceURL, replyAuthor))
-	}
-
-	// Build consolidated content
 	var sb strings.Builder
 
-	for _, msg := range thread.Messages {
-		author, _ := msg.GetMetadata()["author"].(string)
-		sb.WriteString(fmt.Sprintf("**%s**: %s\n\n", author, msg.GetContent()))
-	}
+	sb.WriteString(fmt.Sprintf("# #%s \u2014 %s\n\n", channelName, dateStr))
 
-	thread.Content = sb.String()
+	for i, entry := range entries {
+		content := ExtractMessageText(&entry.msg)
+		url := messageURL(workspaceURL, channelID, entry.msg.Ts)
+		t := formatTime(entry.msg.Ts)
 
-	return thread
-}
+		sb.WriteString(fmt.Sprintf("**%s** \u00b7 [%s](%s)\n", entry.author, t, url))
 
-func collectParticipants(parent *RawMessage, replies []RawMessage) []string {
-	seen := make(map[string]bool)
-	participants := make([]string, 0)
+		if content != "" {
+			sb.WriteString(content)
+			sb.WriteString("\n")
+		}
 
-	if parent.User != "" {
-		seen[parent.User] = true
-		participants = append(participants, parent.User)
-	}
+		if len(entry.replies) > 0 {
+			sb.WriteString("\n")
 
-	for _, r := range replies {
-		if r.User != "" && !seen[r.User] {
-			seen[r.User] = true
-			participants = append(participants, r.User)
+			for _, reply := range entry.replies {
+				replyContent := ExtractMessageText(&reply.msg)
+				replyTime := formatTime(reply.msg.Ts)
+				sb.WriteString(fmt.Sprintf("> **%s** \u00b7 %s \u2014 %s\n", reply.author, replyTime, replyContent))
+			}
+		}
+
+		if i < len(entries)-1 {
+			sb.WriteString("\n---\n\n")
 		}
 	}
 
-	return participants
+	dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+
+	return &models.BasicItem{
+		ID:         fmt.Sprintf("slack_daily_%s_%s", channelID, dateStr),
+		Title:      title,
+		Content:    sb.String(),
+		SourceType: "slack",
+		ItemType:   "slack_daily",
+		CreatedAt:  dayStart,
+		UpdatedAt:  dayStart,
+		Tags:       []string{"slack", fmt.Sprintf("channel:%s", channelName)},
+		Metadata: map[string]any{
+			"channel":       channelName,
+			"channel_id":    channelID,
+			"workspace":     workspaceURL,
+			"date":          dateStr,
+			"message_count": len(entries),
+		},
+		Links:       []models.Link{},
+		Attachments: []models.Attachment{},
+	}
 }
