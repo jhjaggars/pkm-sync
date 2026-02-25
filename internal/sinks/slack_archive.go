@@ -30,36 +30,13 @@ CREATE TABLE IF NOT EXISTS slack_messages (
     synced_at    TEXT    NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_sm_channel  ON slack_messages(channel_id);
-CREATE INDEX IF NOT EXISTS idx_sm_thread   ON slack_messages(thread_ts) WHERE thread_ts != '';
-CREATE INDEX IF NOT EXISTS idx_sm_created  ON slack_messages(created_at);
-CREATE INDEX IF NOT EXISTS idx_sm_author   ON slack_messages(author);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS slack_messages_fts USING fts5(
-    content, author, channel_name,
-    content='slack_messages',
-    content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS slack_messages_ai AFTER INSERT ON slack_messages BEGIN
-    INSERT INTO slack_messages_fts(rowid, content, author, channel_name)
-    VALUES (new.rowid, new.content, new.author, new.channel_name);
-END;
-
-CREATE TRIGGER IF NOT EXISTS slack_messages_ad AFTER DELETE ON slack_messages BEGIN
-    INSERT INTO slack_messages_fts(slack_messages_fts, rowid, content, author, channel_name)
-    VALUES ('delete', old.rowid, old.content, old.author, old.channel_name);
-END;
-
-CREATE TRIGGER IF NOT EXISTS slack_messages_au AFTER UPDATE ON slack_messages BEGIN
-    INSERT INTO slack_messages_fts(slack_messages_fts, rowid, content, author, channel_name)
-    VALUES ('delete', old.rowid, old.content, old.author, old.channel_name);
-    INSERT INTO slack_messages_fts(rowid, content, author, channel_name)
-    VALUES (new.rowid, new.content, new.author, new.channel_name);
-END;
+CREATE INDEX IF NOT EXISTS idx_sm_channel ON slack_messages(channel_id);
+CREATE INDEX IF NOT EXISTS idx_sm_thread  ON slack_messages(thread_ts) WHERE thread_ts != '';
+CREATE INDEX IF NOT EXISTS idx_sm_created ON slack_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_sm_author  ON slack_messages(author);
 `
 
-// SlackArchiveSink writes Slack message items to a SQLite database with FTS5 full-text search.
+// SlackArchiveSink writes Slack message items to a SQLite database.
 type SlackArchiveSink struct {
 	db     *sql.DB
 	dbPath string
