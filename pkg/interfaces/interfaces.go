@@ -17,28 +17,6 @@ type Source interface {
 	SupportsRealtime() bool
 }
 
-// Target represents any PKM system (Obsidian, Logseq, etc.)
-// Accepts FullItem interface to handle all types of items with full capabilities.
-type Target interface {
-	Name() string
-	Configure(config map[string]interface{}) error
-	Export(items []models.FullItem, outputDir string) error
-	FormatFilename(title string) string
-	GetFileExtension() string
-	FormatMetadata(metadata map[string]interface{}) string
-	Preview(items []models.FullItem, outputDir string) ([]*FilePreview, error)
-}
-
-// ContentTarget represents a target that only needs core item content for export.
-// Useful for simple export targets that don't need metadata or enrichment.
-type ContentTarget interface {
-	Name() string
-	Configure(config map[string]interface{}) error
-	Export(items []models.SourcedItem, outputDir string) error
-	FormatFilename(title string) string
-	GetFileExtension() string
-}
-
 // FilePreview represents what would happen to a file during sync.
 type FilePreview struct {
 	FilePath        string // Full path where file would be created
@@ -49,22 +27,10 @@ type FilePreview struct {
 }
 
 // Sink represents any destination that can receive items (file system, vector DB, etc.).
-// This is a more general abstraction than Target, which is file-specific.
+// This is a more general abstraction than the removed Target, which was file-specific.
 type Sink interface {
 	Name() string
 	Write(ctx context.Context, items []models.FullItem) error
-}
-
-// Syncer coordinates between sources and targets.
-type Syncer interface {
-	Sync(source Source, target Target, options SyncOptions) error
-}
-
-type SyncOptions struct {
-	Since     time.Time
-	OutputDir string
-	DryRun    bool
-	Overwrite bool
 }
 
 // Transformer represents a processing step that can modify items.

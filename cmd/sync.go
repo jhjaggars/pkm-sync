@@ -151,13 +151,12 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no valid sources could be initialized")
 	}
 
-	// Create target and file sink
-	target, err := createTargetWithConfig(finalTargetName, cfg)
+	// Create file sink directly
+	fileSink, err := createFileSinkWithConfig(finalTargetName, finalOutputDir, cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create target: %w", err)
+		return fmt.Errorf("failed to create sink: %w", err)
 	}
 
-	fileSink := sinks.NewFileSink(target, finalOutputDir)
 	sinksSlice := []interfaces.Sink{fileSink}
 
 	vectorSink, err := maybeCreateVectorSink(cfg)
@@ -202,7 +201,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if syncDryRun {
-		previews, err := target.Preview(syncResult.Items, finalOutputDir)
+		previews, err := fileSink.Preview(syncResult.Items)
 		if err != nil {
 			return fmt.Errorf("failed to generate preview: %w", err)
 		}
@@ -248,3 +247,6 @@ func printSyncSummary(results []syncer.SourceResult, totalItems int) {
 		}
 	}
 }
+
+// Ensure FileSink satisfies Sink at compile time (used in this file).
+var _ interfaces.Sink = (*sinks.FileSink)(nil)
