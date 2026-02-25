@@ -322,7 +322,19 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 				config.Drive.SlideExportFormat)
 		}
 	case "slack":
-		// Add slack-specific validations if needed
+		if config.Slack.WorkspaceURL == "" {
+			return fmt.Errorf("workspace_url is required for slack sources")
+		}
+
+		if len(config.Slack.Channels) == 0 && !config.Slack.IncludeDMs {
+			return fmt.Errorf("at least one channel or include_dms must be set for slack sources")
+		}
+
+		validThreadModes := map[string]bool{"individual": true, "consolidated": true, "summary": true, "": true}
+		if !validThreadModes[config.Slack.ThreadMode] {
+			return fmt.Errorf("invalid thread_mode %q for slack (supported: individual, consolidated, summary)",
+				config.Slack.ThreadMode)
+		}
 	case "jira":
 		// Add jira-specific validations if needed
 	default:
