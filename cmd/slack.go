@@ -1,14 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 
 	"pkm-sync/internal/config"
-	"pkm-sync/internal/sinks"
-	slacksource "pkm-sync/internal/sources/slack"
 	"pkm-sync/pkg/models"
 
 	"github.com/spf13/cobra"
@@ -50,7 +46,6 @@ func runSlackCommand(_ *cobra.Command, _ []string) error {
 		cfg = config.GetDefaultConfig()
 	}
 
-	// Resolve sources to sync.
 	var sourcesToSync []string
 	if slackSourceName != "" {
 		sourcesToSync = []string{slackSourceName}
@@ -62,109 +57,25 @@ func runSlackCommand(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no Slack sources configured. Please configure Slack sources in your config file or use --source flag")
 	}
 
-	// Resolve database path.
-	dbPath := slackDBPath
-	if dbPath == "" {
-		configDir, err := config.GetConfigDir()
-		if err != nil {
-			return fmt.Errorf("failed to get config directory: %w", err)
-		}
-
-		dbPath = filepath.Join(configDir, "slack.db")
-	}
-
-	// Resolve since time.
 	finalSince := cfg.Sync.DefaultSince
 	if slackSince != "" {
 		finalSince = slackSince
 	}
 
-	sinceTime, err := parseSinceTime(finalSince)
-	if err != nil {
-		return fmt.Errorf("invalid since parameter: %w", err)
-	}
-
-	// Collect all items from all sources.
-	var allItems []models.FullItem
-
-	for _, srcName := range sourcesToSync {
-		sourceConfig, exists := cfg.Sources[srcName]
-		if !exists {
-			fmt.Printf("Warning: Slack source '%s' not configured, skipping\n", srcName)
-
-			continue
-		}
-
-		if !sourceConfig.Enabled {
-			fmt.Printf("Slack source '%s' is disabled, skipping\n", srcName)
-
-			continue
-		}
-
-		if sourceConfig.Type != "slack" {
-			fmt.Printf("Warning: source '%s' is not a Slack source (type: %s), skipping\n", srcName, sourceConfig.Type)
-
-			continue
-		}
-
-		src := slacksource.NewSlackSource(srcName, sourceConfig)
-		if err := src.Configure(nil, nil); err != nil {
-			fmt.Printf("Warning: failed to configure Slack source '%s': %v, skipping\n", srcName, err)
-
-			continue
-		}
-
-		items, err := src.Fetch(sinceTime, slackLimit)
-		if err != nil {
-			fmt.Printf("Warning: failed to fetch from Slack source '%s': %v, skipping\n", srcName, err)
-
-			continue
-		}
-
-		allItems = append(allItems, items...)
-	}
-
-	if slackDryRun {
-		printSlackDryRunSummary(allItems, dbPath)
-
-		return nil
-	}
-
-	if len(allItems) == 0 {
-		fmt.Println("No Slack messages found to archive.")
-
-		return nil
-	}
-
-	// Write to SQLite archive.
-	sink, err := sinks.NewSlackArchiveSink(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open slack archive at %s: %w", dbPath, err)
-	}
-
-	defer sink.Close()
-
-	if err := sink.Write(context.Background(), allItems); err != nil {
-		return fmt.Errorf("failed to write slack messages to archive: %w", err)
-	}
-
-	// Optionally write to VectorSink when auto_index is enabled.
-	vectorSink, err := maybeCreateVectorSink(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create vector sink: %w", err)
-	}
-
-	if vectorSink != nil {
-		defer vectorSink.Close()
-
-		if err := vectorSink.Write(context.Background(), allItems); err != nil {
-			fmt.Printf("Warning: vector sink write failed: %v\n", err)
-		}
-	}
-
-	fmt.Printf("Successfully wrote %d Slack messages to %s\n", len(allItems), dbPath)
-
-	return nil
+	return runSourceSync(cfg, sourceSyncConfig{
+		SourceType:   "slack",
+		Sources:      sourcesToSync,
+		TargetName:   cfg.Sync.DefaultTarget,
+		OutputDir:    cfg.Sync.DefaultOutputDir,
+		Since:        finalSince,
+		SinceFlag:    slackSince,
+		DefaultLimit: slackLimit,
+		DryRun:       slackDryRun,
+		OutputFormat: "summary",
+		SourceKind:   "Slack",
+		ItemKind:     "messages",
+		SlackDBPath:  slackDBPath,
+	})
 }
 
 // printSlackDryRunSummary prints a channel-by-channel count table.

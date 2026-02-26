@@ -52,6 +52,7 @@ linters:
     - gocognit    # Cognitive complexity (5 issues)
     - gocyclo     # Cyclomatic complexity (1 issue)
     - godox       # TODO comments (1 issue)
+    - maintidx    # Maintainability index (1 issue, consistent with other complexity disables)
     - mnd         # Magic numbers (59 issues)
     - testpackage # Test package naming (16 issues)
     - wsl         # Deprecated, replaced by wsl_v5

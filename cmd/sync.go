@@ -1,15 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"pkm-sync/internal/config"
-	"pkm-sync/internal/sinks"
-	syncer "pkm-sync/internal/sync"
-	"pkm-sync/internal/transform"
-	"pkm-sync/pkg/interfaces"
 
 	"github.com/spf13/cobra"
 )
@@ -83,16 +78,8 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		finalSince = syncSince
 	}
 
-	defaultSinceTime, err := parseSinceTime(finalSince)
-	if err != nil {
-		return fmt.Errorf("invalid since parameter: %w", err)
-	}
-
-	fmt.Printf("Syncing sources [%s] to %s (output: %s, since: %s)\n",
-		strings.Join(sourcesToSync, ", "), finalTargetName, finalOutputDir, finalSince)
-
-	// Build source entries (pre-create sources with per-source options)
-	entries := make([]syncer.SourceEntry, 0, len(sourcesToSync))
+	// Group enabled sources by type for dispatch to runSourceSync.
+	typeGroups := map[string][]string{}
 
 	for _, srcName := range sourcesToSync {
 		sourceConfig, exists := cfg.Sources[srcName]
@@ -102,150 +89,60 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		if !sourceConfig.Enabled {
-			fmt.Printf("Source '%s' is disabled, skipping\n", srcName)
-
-			continue
-		}
-
-		// slack uses its own pipeline (pkm-sync slack), not the general sync.
-		if sourceConfig.Type != "gmail" && sourceConfig.Type != "google_calendar" && sourceConfig.Type != "google_drive" {
+		switch sourceConfig.Type {
+		case "gmail", "google_calendar", "google_drive", "slack":
+			typeGroups[sourceConfig.Type] = append(typeGroups[sourceConfig.Type], srcName)
+		default:
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
-
-			continue
 		}
-
-		src, err := createSourceWithConfig(srcName, sourceConfig, nil)
-		if err != nil {
-			fmt.Printf("Warning: failed to create source '%s': %v, skipping\n", srcName, err)
-
-			continue
-		}
-
-		entry := syncer.SourceEntry{Name: srcName, Src: src}
-
-		// Per-source since: config overrides default, but CLI flag takes precedence
-		if sourceConfig.Since != "" && syncSince == "" {
-			t, err := parseSinceTime(sourceConfig.Since)
-			if err != nil {
-				fmt.Printf("Warning: invalid since time for source '%s': %v, using default\n", srcName, err)
-			} else {
-				entry.Since = t
-			}
-		}
-
-		// Per-source limit (cap at 2500)
-		if sourceConfig.Google.MaxResults > 0 {
-			if sourceConfig.Google.MaxResults > 2500 {
-				fmt.Printf("Warning: max_results for source '%s' is %d (maximum: 2500), capping\n", srcName, sourceConfig.Google.MaxResults)
-
-				entry.Limit = 2500
-			} else {
-				entry.Limit = sourceConfig.Google.MaxResults
-			}
-		}
-
-		entries = append(entries, entry)
 	}
 
-	if len(entries) == 0 {
+	if len(typeGroups) == 0 {
 		return fmt.Errorf("no valid sources could be initialized")
 	}
 
-	// Create target and file sink
-	target, err := createTargetWithConfig(finalTargetName, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create target: %w", err)
+	type typeGroupCfg struct {
+		sourceType string
+		sourceKind string
+		itemKind   string
 	}
 
-	fileSink := sinks.NewFileSink(target, finalOutputDir)
-	sinksSlice := []interfaces.Sink{fileSink}
-
-	vectorSink, err := maybeCreateVectorSink(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create vector sink: %w", err)
+	groups := []typeGroupCfg{
+		{"gmail", "Gmail", "emails"},
+		{"google_calendar", "Calendar", "events"},
+		{"google_drive", "Drive", "documents"},
+		{"slack", "Slack", "messages"},
 	}
 
-	if vectorSink != nil {
-		defer vectorSink.Close()
+	var failedGroups []string
 
-		sinksSlice = append(sinksSlice, vectorSink)
-	}
-
-	// Build transformer pipeline with all transformers
-	pipeline := transform.NewPipeline()
-	for _, t := range transform.GetAllContentProcessingTransformers() {
-		if err := pipeline.AddTransformer(t); err != nil {
-			return fmt.Errorf("failed to add transformer %s: %w", t.Name(), err)
+	for _, g := range groups {
+		sources, ok := typeGroups[g.sourceType]
+		if !ok || len(sources) == 0 {
+			continue
 		}
-	}
 
-	// Enable source tags when auto-indexing so VectorSink can extract source names for dedup
-	sourceTags := cfg.Sync.SourceTags || vectorSink != nil
-
-	// Run the full sync pipeline
-	s := syncer.NewMultiSyncer(pipeline)
-
-	syncResult, err := s.SyncAll(
-		context.Background(),
-		entries,
-		sinksSlice,
-		syncer.MultiSyncOptions{
-			DefaultSince: defaultSinceTime,
+		if err := runSourceSync(cfg, sourceSyncConfig{
+			SourceType:   g.sourceType,
+			Sources:      sources,
+			TargetName:   finalTargetName,
+			OutputDir:    finalOutputDir,
+			Since:        finalSince,
+			SinceFlag:    syncSince,
 			DefaultLimit: syncLimit,
-			SourceTags:   sourceTags,
-			TransformCfg: cfg.Transformers,
 			DryRun:       syncDryRun,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("sync failed: %w", err)
-	}
-
-	if syncDryRun {
-		previews, err := target.Preview(syncResult.Items, finalOutputDir)
-		if err != nil {
-			return fmt.Errorf("failed to generate preview: %w", err)
-		}
-
-		switch syncOutputFormat {
-		case "json":
-			return outputDryRunJSON(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
-		case "summary":
-			return outputDryRunSummary(syncResult.Items, previews, finalTargetName, finalOutputDir, sourcesToSync)
-		default:
-			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", syncOutputFormat)
+			OutputFormat: syncOutputFormat,
+			SourceKind:   g.sourceKind,
+			ItemKind:     g.itemKind,
+		}); err != nil {
+			fmt.Printf("Warning: %s sync failed: %v\n", g.sourceKind, err)
+			failedGroups = append(failedGroups, g.sourceKind)
 		}
 	}
 
-	printSyncSummary(syncResult.SourceResults, len(syncResult.Items))
+	if len(failedGroups) > 0 {
+		return fmt.Errorf("sync failed for: %s", strings.Join(failedGroups, ", "))
+	}
 
 	return nil
-}
-
-func printSyncSummary(results []syncer.SourceResult, totalItems int) {
-	attempted := len(results)
-	succeeded := 0
-	failed := 0
-
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-		} else {
-			succeeded++
-		}
-	}
-
-	fmt.Printf("\nSync complete: %d sources attempted, %d succeeded, %d failed\n", attempted, succeeded, failed)
-	fmt.Printf("Total items exported: %d\n", totalItems)
-
-	if failed > 0 {
-		fmt.Printf("\nFailed sources:\n")
-
-		for _, r := range results {
-			if r.Err != nil {
-				fmt.Printf("  - %s: %v\n", r.Name, r.Err)
-			}
-		}
-	}
 }

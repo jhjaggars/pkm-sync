@@ -175,6 +175,21 @@ func maybeCreateArchiveSink(cfg *models.Config, fetcher sinks.RawMessageFetcher)
 	}, fetcher)
 }
 
+// maybeCreateSlackArchiveSink creates a SlackArchiveSink at the given path (or the default path).
+// The caller must call Close() on non-nil results.
+func maybeCreateSlackArchiveSink(dbPath string) (*sinks.SlackArchiveSink, error) {
+	if dbPath == "" {
+		configDir, err := config.GetConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config directory: %w", err)
+		}
+
+		dbPath = filepath.Join(configDir, "slack.db")
+	}
+
+	return sinks.NewSlackArchiveSink(dbPath)
+}
+
 // gmailFetcherFromEntries returns the first RawMessageFetcher found among the source entries.
 // Returns nil if no Gmail source with an initialized service is found.
 func gmailFetcherFromEntries(entries []syncer.SourceEntry) sinks.RawMessageFetcher {
@@ -306,6 +321,7 @@ type sourceSyncConfig struct {
 	OutputFormat string
 	SourceKind   string // e.g. "Gmail", "Drive" — used in log messages
 	ItemKind     string // e.g. "emails", "documents" — used in success message
+	SlackDBPath  string // override for slack archive DB path (empty = default)
 }
 
 // runSourceSync executes the full sync pipeline for a specific source type.
@@ -383,32 +399,6 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		return fmt.Errorf("failed to create target: %w", err)
 	}
 
-	// Apply output_subdir: use the common subdir if all sources agree, else warn and use base dir.
-	effectiveOutputDir := ssc.OutputDir
-	if len(entries) == 1 {
-		effectiveOutputDir = getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
-	} else {
-		first := getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
-		allSame := true
-
-		for _, e := range entries[1:] {
-			if getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[e.Name]) != first {
-				allSame = false
-
-				break
-			}
-		}
-
-		if allSame {
-			effectiveOutputDir = first
-		} else {
-			fmt.Printf("Warning: sources have different output_subdir settings; using base output dir %s\n", ssc.OutputDir)
-		}
-	}
-
-	fileSink := sinks.NewFileSink(target, effectiveOutputDir)
-	sinksSlice := []interfaces.Sink{fileSink}
-
 	vectorSink, err := maybeCreateVectorSink(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create vector sink: %w", err)
@@ -416,22 +406,30 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 	if vectorSink != nil {
 		defer vectorSink.Close()
-
-		sinksSlice = append(sinksSlice, vectorSink)
 	}
 
-	// Wire ArchiveSink for Gmail sources when archive is enabled.
+	// Wire ArchiveSink once for Gmail sources when archive is enabled; shared across the loop.
+	var archiveSink *sinks.ArchiveSink
 	if ssc.SourceType == "gmail" && cfg.Archive.Enabled {
-		archiveSink, archiveErr := maybeCreateArchiveSink(cfg, gmailFetcherFromEntries(entries))
-		if archiveErr != nil {
-			return fmt.Errorf("failed to create archive sink: %w", archiveErr)
+		archiveSink, err = maybeCreateArchiveSink(cfg, gmailFetcherFromEntries(entries))
+		if err != nil {
+			return fmt.Errorf("failed to create archive sink: %w", err)
 		}
 
 		if archiveSink != nil {
 			defer archiveSink.Close()
-
-			sinksSlice = append(sinksSlice, archiveSink)
 		}
+	}
+
+	// Wire SlackArchiveSink for Slack sources; shared across the loop.
+	var slackArchiveSink *sinks.SlackArchiveSink
+	if ssc.SourceType == "slack" {
+		slackArchiveSink, err = maybeCreateSlackArchiveSink(ssc.SlackDBPath)
+		if err != nil {
+			return fmt.Errorf("failed to create slack archive sink: %w", err)
+		}
+
+		defer slackArchiveSink.Close()
 	}
 
 	pipeline := transform.NewPipeline()
@@ -446,39 +444,87 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	// Enable source tags when auto-indexing so VectorSink can extract source names for dedup
 	sourceTags := cfg.Sync.SourceTags || vectorSink != nil
 
-	syncResult, err := s.SyncAll(
-		context.Background(),
-		entries,
-		sinksSlice,
-		syncer.MultiSyncOptions{
-			DefaultSince: defaultSinceTime,
-			DefaultLimit: ssc.DefaultLimit,
-			SourceTags:   sourceTags,
-			TransformCfg: cfg.Transformers,
-			DryRun:       ssc.DryRun,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("sync failed: %w", err)
+	var allItems []models.FullItem
+
+	for _, entry := range entries {
+		sourceConfig := cfg.Sources[entry.Name]
+		sourceOutputDir := getSourceOutputDirectory(ssc.OutputDir, sourceConfig)
+
+		var sinksForSource []interfaces.Sink
+
+		// Gmail with archive enabled: use archive only, no file export to vault.
+		// Fall back to FileSink if archiveSink could not be created.
+		// Slack always uses SlackArchiveSink only — no file export to vault.
+		if sourceConfig.Type == "gmail" && cfg.Archive.Enabled && archiveSink != nil {
+			// FileSink intentionally omitted; ArchiveSink below handles storage.
+		} else if sourceConfig.Type == "slack" {
+			// FileSink intentionally omitted; SlackArchiveSink below handles storage.
+		} else {
+			sinksForSource = append(sinksForSource, sinks.NewFileSink(target, sourceOutputDir))
+		}
+
+		if vectorSink != nil {
+			sinksForSource = append(sinksForSource, vectorSink)
+		}
+
+		if archiveSink != nil {
+			sinksForSource = append(sinksForSource, archiveSink)
+		}
+
+		if slackArchiveSink != nil {
+			sinksForSource = append(sinksForSource, slackArchiveSink)
+		}
+
+		result, syncErr := s.SyncAll(
+			context.Background(),
+			[]syncer.SourceEntry{entry},
+			sinksForSource,
+			syncer.MultiSyncOptions{
+				DefaultSince: defaultSinceTime,
+				DefaultLimit: ssc.DefaultLimit,
+				SourceTags:   sourceTags,
+				TransformCfg: cfg.Transformers,
+				DryRun:       ssc.DryRun,
+			},
+		)
+		if syncErr != nil {
+			fmt.Printf("Warning: sync failed for source '%s': %v\n", entry.Name, syncErr)
+
+			continue
+		}
+
+		allItems = append(allItems, result.Items...)
 	}
 
 	if ssc.DryRun {
-		previews, err := target.Preview(syncResult.Items, ssc.OutputDir)
+		if ssc.SourceType == "slack" {
+			dbPath := ssc.SlackDBPath
+			if dbPath == "" {
+				configDir, _ := config.GetConfigDir()
+				dbPath = filepath.Join(configDir, "slack.db")
+			}
+
+			printSlackDryRunSummary(allItems, dbPath)
+
+			return nil
+		}
+
+		previews, err := target.Preview(allItems, ssc.OutputDir)
 		if err != nil {
 			return fmt.Errorf("failed to generate preview: %w", err)
 		}
 
 		switch ssc.OutputFormat {
 		case "json":
-			return outputDryRunJSON(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+			return outputDryRunJSON(allItems, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
 		case "summary":
-			return outputDryRunSummary(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+			return outputDryRunSummary(allItems, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
 		default:
 			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", ssc.OutputFormat)
 		}
 	}
 
-	fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)
+	fmt.Printf("Successfully exported %d %s\n", len(allItems), ssc.ItemKind)
 
 	return nil
 }
