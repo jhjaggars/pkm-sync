@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -31,42 +32,25 @@ func (m *MockSource) SupportsRealtime() bool {
 	return false
 }
 
-// MockTarget is a mock implementation of the Target interface for testing.
-type MockTarget struct {
-	exportedItems []models.FullItem
+// MockSink is a mock implementation of the Sink interface for testing.
+type MockSink struct {
+	writtenItems []models.FullItem
 }
 
-func (m *MockTarget) Name() string {
-	return "mock_target"
+func (m *MockSink) Name() string {
+	return "mock_sink"
 }
 
-func (m *MockTarget) Configure(config map[string]interface{}) error {
-	return nil
-}
-
-func (m *MockTarget) Export(items []models.FullItem, outputDir string) error {
-	m.exportedItems = items
+func (m *MockSink) Write(_ context.Context, items []models.FullItem) error {
+	m.writtenItems = items
 
 	return nil
 }
 
-func (m *MockTarget) FormatFilename(title string) string {
-	return title
-}
+// Ensure MockSink implements Sink.
+var _ interfaces.Sink = (*MockSink)(nil)
 
-func (m *MockTarget) GetFileExtension() string {
-	return ".md"
-}
-
-func (m *MockTarget) FormatMetadata(metadata map[string]interface{}) string {
-	return ""
-}
-
-func (m *MockTarget) Preview(items []models.FullItem, outputDir string) ([]*interfaces.FilePreview, error) {
-	return nil, nil
-}
-
-func TestSyncerWithTransformerPipeline(t *testing.T) {
+func TestMultiSyncerWithTransformerPipeline(t *testing.T) {
 	// Create a mock source that returns two items
 	source := &MockSource{
 		itemsToReturn: []models.FullItem{
@@ -75,8 +59,8 @@ func TestSyncerWithTransformerPipeline(t *testing.T) {
 		},
 	}
 
-	// Create a mock target
-	target := &MockTarget{}
+	// Create a mock sink
+	sink := &MockSink{}
 
 	// Create a transformer pipeline that filters out short items
 	pipeline := transform.NewPipeline()
@@ -85,30 +69,47 @@ func TestSyncerWithTransformerPipeline(t *testing.T) {
 		"min_content_length": 10,
 	})
 	pipeline.AddTransformer(filterTransformer)
-	pipeline.Configure(models.TransformConfig{
+
+	transformCfg := models.TransformConfig{
 		Enabled:       true,
 		PipelineOrder: []string{"filter"},
 		ErrorStrategy: "fail_fast",
 		Transformers: map[string]map[string]interface{}{
 			"filter": {"min_content_length": 10},
 		},
-	})
+	}
 
-	// Create a syncer with the pipeline
-	syncer := NewSyncerWithPipeline(pipeline)
+	// Create a multi-syncer with the pipeline
+	ms := NewMultiSyncer(pipeline)
 
 	// Perform the sync
-	err := syncer.Sync(source, target, interfaces.SyncOptions{})
+	result, err := ms.SyncAll(
+		context.Background(),
+		[]SourceEntry{{Name: "mock_source", Src: source}},
+		[]interfaces.Sink{sink},
+		MultiSyncOptions{
+			TransformCfg: transformCfg,
+		},
+	)
 	if err != nil {
-		t.Fatalf("Sync failed: %v", err)
+		t.Fatalf("SyncAll failed: %v", err)
 	}
 
-	// Check that the target only received the long item
-	if len(target.exportedItems) != 1 {
-		t.Errorf("Expected 1 item to be exported, but got %d", len(target.exportedItems))
+	// Verify the sink only received the long item
+	if len(sink.writtenItems) != 1 {
+		t.Errorf("Expected 1 item to be written, but got %d", len(sink.writtenItems))
 	}
 
-	if target.exportedItems[0].GetID() != "2" {
-		t.Errorf("Expected item with ID 2 to be exported, but got %s", target.exportedItems[0].GetID())
+	if sink.writtenItems[0].GetID() != "2" {
+		t.Errorf("Expected item with ID 2 to be written, but got %s", sink.writtenItems[0].GetID())
+	}
+
+	// Verify result tracking
+	if len(result.SourceResults) != 1 {
+		t.Errorf("Expected 1 source result, got %d", len(result.SourceResults))
+	}
+
+	if result.SourceResults[0].Name != "mock_source" {
+		t.Errorf("Expected source name 'mock_source', got '%s'", result.SourceResults[0].Name)
 	}
 }

@@ -438,35 +438,35 @@ func TestCreateSource_FutureSources(t *testing.T) {
 	}
 }
 
-func TestCreateTarget_Obsidian(t *testing.T) {
-	target, err := createTarget("obsidian")
+func TestCreateFileSink_Obsidian(t *testing.T) {
+	sink, err := createFileSink("obsidian", "/tmp/test-output")
 	if err != nil {
-		t.Fatalf("Failed to create obsidian target: %v", err)
+		t.Fatalf("Failed to create obsidian sink: %v", err)
 	}
 
-	if target == nil {
-		t.Error("Expected non-nil target")
+	if sink == nil {
+		t.Error("Expected non-nil sink")
 	}
 }
 
-func TestCreateTarget_Logseq(t *testing.T) {
-	target, err := createTarget("logseq")
+func TestCreateFileSink_Logseq(t *testing.T) {
+	sink, err := createFileSink("logseq", "/tmp/test-output")
 	if err != nil {
-		t.Fatalf("Failed to create logseq target: %v", err)
+		t.Fatalf("Failed to create logseq sink: %v", err)
 	}
 
-	if target == nil {
-		t.Error("Expected non-nil target")
+	if sink == nil {
+		t.Error("Expected non-nil sink")
 	}
 }
 
-func TestCreateTarget_Unknown(t *testing.T) {
-	_, err := createTarget("unknown")
+func TestCreateFileSink_Unknown(t *testing.T) {
+	_, err := createFileSink("unknown", "/tmp/test-output")
 	if err == nil {
-		t.Error("Expected error for unknown target")
+		t.Error("Expected error for unknown sink")
 	}
 
-	expectedError := "unknown target 'unknown': supported targets are 'obsidian' and 'logseq'"
+	expectedError := "unknown formatter 'unknown': supported formatters are 'obsidian' and 'logseq'"
 	if err.Error() != expectedError {
 		t.Errorf("Expected error message %q, got %q", expectedError, err.Error())
 	}

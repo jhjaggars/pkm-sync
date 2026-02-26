@@ -14,8 +14,6 @@ import (
 	"pkm-sync/internal/sources/google"
 	slacksource "pkm-sync/internal/sources/slack"
 	syncer "pkm-sync/internal/sync"
-	"pkm-sync/internal/targets/logseq"
-	"pkm-sync/internal/targets/obsidian"
 	"pkm-sync/internal/transform"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
@@ -75,63 +73,26 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 	}
 }
 
-// createTarget creates a named target without config.
-func createTarget(name string) (interfaces.Target, error) {
-	switch name {
-	case "obsidian":
-		target := obsidian.NewObsidianTarget()
-		if err := target.Configure(nil); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-	case "logseq":
-		target := logseq.NewLogseqTarget()
-		if err := target.Configure(nil); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-	default:
-		return nil, fmt.Errorf("unknown target '%s': supported targets are 'obsidian' and 'logseq'", name)
-	}
+// createFileSink creates a FileSink for the given formatter name and output directory.
+func createFileSink(name string, outputDir string) (*sinks.FileSink, error) {
+	return sinks.NewFileSink(name, outputDir, nil)
 }
 
-// createTargetWithConfig creates a target configured from the application config.
-func createTargetWithConfig(name string, cfg *models.Config) (interfaces.Target, error) {
-	switch name {
-	case "obsidian":
-		target := obsidian.NewObsidianTarget()
+// createFileSinkWithConfig creates a FileSink configured from the application config.
+func createFileSinkWithConfig(name string, outputDir string, cfg *models.Config) (*sinks.FileSink, error) {
+	fmtConfig := make(map[string]any)
 
-		configMap := make(map[string]any)
-		if targetConfig, exists := cfg.Targets[name]; exists {
-			configMap["template_dir"] = targetConfig.Obsidian.DefaultFolder
-			configMap["daily_notes_format"] = targetConfig.Obsidian.DateFormat
+	if targetConfig, exists := cfg.Targets[name]; exists {
+		switch name {
+		case "obsidian":
+			fmtConfig["template_dir"] = targetConfig.Obsidian.DefaultFolder
+			fmtConfig["daily_notes_format"] = targetConfig.Obsidian.DateFormat
+		case "logseq":
+			fmtConfig["default_page"] = targetConfig.Logseq.DefaultPage
 		}
-
-		if err := target.Configure(configMap); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-
-	case "logseq":
-		target := logseq.NewLogseqTarget()
-
-		configMap := make(map[string]any)
-		if targetConfig, exists := cfg.Targets[name]; exists {
-			configMap["default_page"] = targetConfig.Logseq.DefaultPage
-		}
-
-		if err := target.Configure(configMap); err != nil {
-			return nil, err
-		}
-
-		return target, nil
-
-	default:
-		return nil, fmt.Errorf("unknown target '%s': supported targets are 'obsidian' and 'logseq'", name)
 	}
+
+	return sinks.NewFileSink(name, outputDir, fmtConfig)
 }
 
 // parseSinceTime delegates to the unified date parser.
@@ -325,7 +286,7 @@ type sourceSyncConfig struct {
 }
 
 // runSourceSync executes the full sync pipeline for a specific source type.
-// It is the shared implementation used by the gmail and drive commands.
+// It is the shared implementation used by the gmail, drive, slack, and sync commands.
 func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	defaultSinceTime, err := parseSinceTime(ssc.Since)
 	if err != nil {
@@ -394,9 +355,41 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		return fmt.Errorf("no valid %s sources could be initialized", ssc.SourceKind)
 	}
 
-	target, err := createTargetWithConfig(ssc.TargetName, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create target: %w", err)
+	// Apply output_subdir: use the common subdir if all sources agree, else warn and use base dir.
+	effectiveOutputDir := ssc.OutputDir
+	if len(entries) == 1 {
+		effectiveOutputDir = getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
+	} else {
+		first := getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[entries[0].Name])
+		allSame := true
+
+		for _, e := range entries[1:] {
+			if getSourceOutputDirectory(ssc.OutputDir, cfg.Sources[e.Name]) != first {
+				allSame = false
+
+				break
+			}
+		}
+
+		if allSame {
+			effectiveOutputDir = first
+		} else {
+			fmt.Printf("Warning: sources have different output_subdir settings; using base output dir %s\n", ssc.OutputDir)
+		}
+	}
+
+	// Slack uses SlackArchiveSink only — no file export to vault.
+	var fileSink *sinks.FileSink
+	if ssc.SourceType != "slack" {
+		fileSink, err = createFileSinkWithConfig(ssc.TargetName, effectiveOutputDir, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create sink: %w", err)
+		}
+	}
+
+	var sinksSlice []interfaces.Sink
+	if fileSink != nil {
+		sinksSlice = append(sinksSlice, fileSink)
 	}
 
 	vectorSink, err := maybeCreateVectorSink(cfg)
@@ -406,30 +399,34 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 	if vectorSink != nil {
 		defer vectorSink.Close()
+
+		sinksSlice = append(sinksSlice, vectorSink)
 	}
 
-	// Wire ArchiveSink once for Gmail sources when archive is enabled; shared across the loop.
-	var archiveSink *sinks.ArchiveSink
+	// Wire ArchiveSink for Gmail sources when archive is enabled.
 	if ssc.SourceType == "gmail" && cfg.Archive.Enabled {
-		archiveSink, err = maybeCreateArchiveSink(cfg, gmailFetcherFromEntries(entries))
-		if err != nil {
-			return fmt.Errorf("failed to create archive sink: %w", err)
+		archiveSink, archiveErr := maybeCreateArchiveSink(cfg, gmailFetcherFromEntries(entries))
+		if archiveErr != nil {
+			return fmt.Errorf("failed to create archive sink: %w", archiveErr)
 		}
 
 		if archiveSink != nil {
 			defer archiveSink.Close()
+
+			sinksSlice = append(sinksSlice, archiveSink)
 		}
 	}
 
-	// Wire SlackArchiveSink for Slack sources; shared across the loop.
-	var slackArchiveSink *sinks.SlackArchiveSink
+	// Wire SlackArchiveSink for Slack sources.
 	if ssc.SourceType == "slack" {
-		slackArchiveSink, err = maybeCreateSlackArchiveSink(ssc.SlackDBPath)
-		if err != nil {
-			return fmt.Errorf("failed to create slack archive sink: %w", err)
+		slackArchiveSink, slackErr := maybeCreateSlackArchiveSink(ssc.SlackDBPath)
+		if slackErr != nil {
+			return fmt.Errorf("failed to create slack archive sink: %w", slackErr)
 		}
 
 		defer slackArchiveSink.Close()
+
+		sinksSlice = append(sinksSlice, slackArchiveSink)
 	}
 
 	pipeline := transform.NewPipeline()
@@ -444,56 +441,20 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	// Enable source tags when auto-indexing so VectorSink can extract source names for dedup
 	sourceTags := cfg.Sync.SourceTags || vectorSink != nil
 
-	var allItems []models.FullItem
-
-	for _, entry := range entries {
-		sourceConfig := cfg.Sources[entry.Name]
-		sourceOutputDir := getSourceOutputDirectory(ssc.OutputDir, sourceConfig)
-
-		var sinksForSource []interfaces.Sink
-
-		// Gmail with archive enabled: use archive only, no file export to vault.
-		// Fall back to FileSink if archiveSink could not be created.
-		// Slack always uses SlackArchiveSink only — no file export to vault.
-		if sourceConfig.Type == "gmail" && cfg.Archive.Enabled && archiveSink != nil {
-			// FileSink intentionally omitted; ArchiveSink below handles storage.
-		} else if sourceConfig.Type == "slack" {
-			// FileSink intentionally omitted; SlackArchiveSink below handles storage.
-		} else {
-			sinksForSource = append(sinksForSource, sinks.NewFileSink(target, sourceOutputDir))
-		}
-
-		if vectorSink != nil {
-			sinksForSource = append(sinksForSource, vectorSink)
-		}
-
-		if archiveSink != nil {
-			sinksForSource = append(sinksForSource, archiveSink)
-		}
-
-		if slackArchiveSink != nil {
-			sinksForSource = append(sinksForSource, slackArchiveSink)
-		}
-
-		result, syncErr := s.SyncAll(
-			context.Background(),
-			[]syncer.SourceEntry{entry},
-			sinksForSource,
-			syncer.MultiSyncOptions{
-				DefaultSince: defaultSinceTime,
-				DefaultLimit: ssc.DefaultLimit,
-				SourceTags:   sourceTags,
-				TransformCfg: cfg.Transformers,
-				DryRun:       ssc.DryRun,
-			},
-		)
-		if syncErr != nil {
-			fmt.Printf("Warning: sync failed for source '%s': %v\n", entry.Name, syncErr)
-
-			continue
-		}
-
-		allItems = append(allItems, result.Items...)
+	syncResult, err := s.SyncAll(
+		context.Background(),
+		entries,
+		sinksSlice,
+		syncer.MultiSyncOptions{
+			DefaultSince: defaultSinceTime,
+			DefaultLimit: ssc.DefaultLimit,
+			SourceTags:   sourceTags,
+			TransformCfg: cfg.Transformers,
+			DryRun:       ssc.DryRun,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sync failed: %w", err)
 	}
 
 	if ssc.DryRun {
@@ -504,27 +465,27 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 				dbPath = filepath.Join(configDir, "slack.db")
 			}
 
-			printSlackDryRunSummary(allItems, dbPath)
+			printSlackDryRunSummary(syncResult.Items, dbPath)
 
 			return nil
 		}
 
-		previews, err := target.Preview(allItems, ssc.OutputDir)
+		previews, err := fileSink.Preview(syncResult.Items)
 		if err != nil {
 			return fmt.Errorf("failed to generate preview: %w", err)
 		}
 
 		switch ssc.OutputFormat {
 		case "json":
-			return outputDryRunJSON(allItems, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+			return outputDryRunJSON(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
 		case "summary":
-			return outputDryRunSummary(allItems, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+			return outputDryRunSummary(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
 		default:
 			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", ssc.OutputFormat)
 		}
 	}
 
-	fmt.Printf("Successfully exported %d %s\n", len(allItems), ssc.ItemKind)
+	fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)
 
 	return nil
 }

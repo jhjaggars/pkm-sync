@@ -166,20 +166,20 @@ func TestGmailEndToEndSyncWorkflow(t *testing.T) {
 
 				assert.NotNil(t, source, "Source should be created successfully")
 
-				// Test target creation
+				// Test sink creation
 				targetName := tt.config.Sync.DefaultTarget
 				if sourceConfig.OutputTarget != "" {
 					targetName = sourceConfig.OutputTarget
 				}
 
-				target, err := createTargetWithConfig(targetName, tt.config)
+				fileSink, err := createFileSinkWithConfig(targetName, outputDir, tt.config)
 				if err != nil {
-					t.Logf("Could not create target %s: %v", targetName, err)
+					t.Logf("Could not create sink %s: %v", targetName, err)
 
 					continue
 				}
 
-				assert.NotNil(t, target, "Target should be created successfully")
+				assert.NotNil(t, fileSink, "FileSink should be created successfully")
 
 				// Test since time parsing
 				sourceSince := tt.config.Sync.DefaultSince
@@ -389,10 +389,10 @@ func TestGmailSyncWithMockData(t *testing.T) {
 	err = os.MkdirAll(outputDir, 0755)
 	assert.NoError(t, err, "Should be able to create output directory")
 
-	// Test target creation
-	target, err := createTargetWithConfig(config.Sync.DefaultTarget, config)
-	assert.NoError(t, err, "Should be able to create target")
-	assert.NotNil(t, target, "Target should not be nil")
+	// Test sink creation
+	fileSink, err := createFileSinkWithConfig(config.Sync.DefaultTarget, outputDir, config)
+	assert.NoError(t, err, "Should be able to create sink")
+	assert.NotNil(t, fileSink, "FileSink should not be nil")
 
 	// Test since time parsing
 	sinceTime, err := parseSinceTime(sourceConfig.Since)

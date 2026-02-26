@@ -22,7 +22,7 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync all enabled sources to PKM systems",
-	Long: `Sync all enabled sources (Gmail, Google Calendar, etc.) to PKM targets in a single operation.
+	Long: `Sync all enabled sources (Gmail, Google Calendar, Drive, Slack) to PKM targets in a single operation.
 
 Examples:
   pkm-sync sync
