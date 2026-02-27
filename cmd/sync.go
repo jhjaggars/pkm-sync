@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"pkm-sync/internal/config"
+	"pkm-sync/internal/sinks"
 
 	"github.com/spf13/cobra"
 )
@@ -107,36 +110,85 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		itemKind   string
 	}
 
-	groups := []typeGroupCfg{
+	allGroups := []typeGroupCfg{
 		{"gmail", "Gmail", "emails"},
 		{"google_calendar", "Calendar", "events"},
 		{"google_drive", "Drive", "documents"},
 		{"slack", "Slack", "messages"},
 	}
 
-	var failedGroups []string
+	// Filter to groups that have at least one configured source.
+	type activeGroup struct {
+		typeGroupCfg
 
-	for _, g := range groups {
-		sources, ok := typeGroups[g.sourceType]
+		sources []string
+	}
+
+	active := make([]activeGroup, 0, len(allGroups))
+
+	for _, grp := range allGroups {
+		sources, ok := typeGroups[grp.sourceType]
 		if !ok || len(sources) == 0 {
 			continue
 		}
 
-		if err := runSourceSync(cfg, sourceSyncConfig{
-			SourceType:   g.sourceType,
-			Sources:      sources,
-			TargetName:   finalTargetName,
-			OutputDir:    finalOutputDir,
-			Since:        finalSince,
-			SinceFlag:    syncSince,
-			DefaultLimit: syncLimit,
-			DryRun:       syncDryRun,
-			OutputFormat: syncOutputFormat,
-			SourceKind:   g.sourceKind,
-			ItemKind:     g.itemKind,
-		}); err != nil {
-			fmt.Printf("Warning: %s sync failed: %v\n", g.sourceKind, err)
-			failedGroups = append(failedGroups, g.sourceKind)
+		active = append(active, activeGroup{grp, sources})
+	}
+
+	// Create a single shared VectorSink (when auto-indexing is enabled) so all
+	// concurrent type-group goroutines write to one SQLite connection rather than
+	// racing on the same file with separate connections.
+	var sharedVectorSink *sinks.VectorSink
+
+	if cfg.VectorDB.AutoIndex {
+		var vsErr error
+
+		sharedVectorSink, vsErr = maybeCreateVectorSink(cfg)
+		if vsErr != nil {
+			return fmt.Errorf("failed to create vector sink: %w", vsErr)
+		}
+
+		if sharedVectorSink != nil {
+			defer sharedVectorSink.Close()
+		}
+	}
+
+	// Run each type group concurrently. Goroutines always return nil so that
+	// one failing group does not cancel the others.
+	groupErrs := make([]error, len(active))
+	eg := new(errgroup.Group)
+
+	for i, ag := range active {
+		eg.Go(func() error {
+			if err := runSourceSync(cfg, sourceSyncConfig{
+				SourceType:       ag.sourceType,
+				Sources:          ag.sources,
+				TargetName:       finalTargetName,
+				OutputDir:        finalOutputDir,
+				Since:            finalSince,
+				SinceFlag:        syncSince,
+				DefaultLimit:     syncLimit,
+				DryRun:           syncDryRun,
+				OutputFormat:     syncOutputFormat,
+				SourceKind:       ag.sourceKind,
+				ItemKind:         ag.itemKind,
+				SharedVectorSink: sharedVectorSink,
+			}); err != nil {
+				fmt.Printf("Warning: %s sync failed: %v\n", ag.sourceKind, err)
+				groupErrs[i] = err
+			}
+
+			return nil
+		})
+	}
+
+	eg.Wait() //nolint:errcheck // goroutines always return nil
+
+	var failedGroups []string
+
+	for i, ag := range active {
+		if groupErrs[i] != nil {
+			failedGroups = append(failedGroups, ag.sourceKind)
 		}
 	}
 

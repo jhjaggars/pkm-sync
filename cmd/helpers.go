@@ -283,6 +283,11 @@ type sourceSyncConfig struct {
 	SourceKind   string // e.g. "Gmail", "Drive" — used in log messages
 	ItemKind     string // e.g. "emails", "documents" — used in success message
 	SlackDBPath  string // override for slack archive DB path (empty = default)
+
+	// SharedVectorSink is an optional pre-created VectorSink shared across concurrent
+	// runSourceSync calls. When set, runSourceSync uses it instead of creating its own
+	// and does NOT close it — the caller owns the lifetime.
+	SharedVectorSink *sinks.VectorSink
 }
 
 // runSourceSync executes the full sync pipeline for a specific source type.
@@ -392,14 +397,21 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		sinksSlice = append(sinksSlice, fileSink)
 	}
 
-	vectorSink, err := maybeCreateVectorSink(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create vector sink: %w", err)
+	// Use a shared VectorSink when one is provided (concurrent sync command),
+	// otherwise create a dedicated one for single-source commands.
+	vectorSink := ssc.SharedVectorSink
+	if vectorSink == nil {
+		vectorSink, err = maybeCreateVectorSink(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create vector sink: %w", err)
+		}
+
+		if vectorSink != nil {
+			defer vectorSink.Close()
+		}
 	}
 
 	if vectorSink != nil {
-		defer vectorSink.Close()
-
 		sinksSlice = append(sinksSlice, vectorSink)
 	}
 
