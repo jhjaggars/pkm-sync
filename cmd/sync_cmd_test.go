@@ -139,13 +139,16 @@ func TestSyncCmd_ErrorAccumulation(t *testing.T) {
 }
 
 func TestSyncCmd_UnsupportedSourceType(t *testing.T) {
-	// drive and other unimplemented types should be skipped with a warning
+	// notion and similar unknown types should be skipped with a warning
 	supportedTypes := map[string]bool{
 		"gmail":           true,
 		"google_calendar": true,
+		"google_drive":    true,
+		"slack":           true,
+		"jira":            true,
 	}
 
-	unsupportedTypes := []string{"drive", "slack", "jira", "notion"}
+	unsupportedTypes := []string{"notion"}
 
 	for _, sourceType := range unsupportedTypes {
 		if supportedTypes[sourceType] {

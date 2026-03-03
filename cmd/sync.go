@@ -25,7 +25,7 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync all enabled sources to PKM systems",
-	Long: `Sync all enabled sources (Gmail, Google Calendar, Drive, Slack) to PKM targets in a single operation.
+	Long: `Sync all enabled sources (Gmail, Google Calendar, Drive, Slack, Jira) to PKM targets in a single operation.
 
 Examples:
   pkm-sync sync
@@ -93,7 +93,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		}
 
 		switch sourceConfig.Type {
-		case "gmail", "google_calendar", "google_drive", "slack":
+		case "gmail", "google_calendar", "google_drive", "slack", "jira":
 			typeGroups[sourceConfig.Type] = append(typeGroups[sourceConfig.Type], srcName)
 		default:
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
@@ -115,6 +115,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		{"google_calendar", "Calendar", "events"},
 		{"google_drive", "Drive", "documents"},
 		{"slack", "Slack", "messages"},
+		{"jira", "Jira", "issues"},
 	}
 
 	// Filter to groups that have at least one configured source.

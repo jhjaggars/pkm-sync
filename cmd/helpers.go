@@ -12,6 +12,7 @@ import (
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google"
+	jirasource "pkm-sync/internal/sources/jira"
 	slacksource "pkm-sync/internal/sources/slack"
 	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/transform"
@@ -68,8 +69,15 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 		}
 
 		return source, nil
+	case "jira":
+		source := jirasource.NewJiraSource(sourceID, sourceConfig)
+		if err := source.Configure(nil, nil); err != nil {
+			return nil, err
+		}
+
+		return source, nil
 	default:
-		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail', 'google_drive', 'slack' (others like jira are planned for future releases)", sourceConfig.Type)
+		return nil, fmt.Errorf("unknown source type '%s': supported types are 'google_calendar', 'gmail', 'google_drive', 'slack', 'jira'", sourceConfig.Type)
 	}
 }
 
@@ -383,9 +391,9 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		}
 	}
 
-	// Slack uses SlackArchiveSink only — no file export to vault.
+	// Slack and Gmail use archive sinks only — no file export to vault.
 	var fileSink *sinks.FileSink
-	if ssc.SourceType != "slack" {
+	if ssc.SourceType != "slack" && ssc.SourceType != "gmail" {
 		fileSink, err = createFileSinkWithConfig(ssc.TargetName, effectiveOutputDir, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create sink: %w", err)
@@ -470,36 +478,49 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	}
 
 	if ssc.DryRun {
-		if ssc.SourceType == "slack" {
-			dbPath := ssc.SlackDBPath
-			if dbPath == "" {
-				configDir, _ := config.GetConfigDir()
-				dbPath = filepath.Join(configDir, "slack.db")
-			}
-
-			printSlackDryRunSummary(syncResult.Items, dbPath)
-
-			return nil
-		}
-
-		previews, err := fileSink.Preview(syncResult.Items)
-		if err != nil {
-			return fmt.Errorf("failed to generate preview: %w", err)
-		}
-
-		switch ssc.OutputFormat {
-		case "json":
-			return outputDryRunJSON(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
-		case "summary":
-			return outputDryRunSummary(syncResult.Items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
-		default:
-			return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", ssc.OutputFormat)
-		}
+		return handleDryRun(ssc, fileSink, syncResult.Items)
 	}
 
 	fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)
 
 	return nil
+}
+
+// handleDryRun prints a dry-run summary appropriate for the source type.
+func handleDryRun(ssc sourceSyncConfig, fileSink *sinks.FileSink, items []models.FullItem) error {
+	if ssc.SourceType == "slack" {
+		dbPath := ssc.SlackDBPath
+		if dbPath == "" {
+			configDir, _ := config.GetConfigDir()
+			dbPath = filepath.Join(configDir, "slack.db")
+		}
+
+		printSlackDryRunSummary(items, dbPath)
+
+		return nil
+	}
+
+	if ssc.SourceType == "gmail" {
+		configDir, _ := config.GetConfigDir()
+		dbPath := filepath.Join(configDir, "archive.db")
+		fmt.Printf("Would archive %d emails to %s\n", len(items), dbPath)
+
+		return nil
+	}
+
+	previews, err := fileSink.Preview(items)
+	if err != nil {
+		return fmt.Errorf("failed to generate preview: %w", err)
+	}
+
+	switch ssc.OutputFormat {
+	case "json":
+		return outputDryRunJSON(items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+	case "summary":
+		return outputDryRunSummary(items, previews, ssc.TargetName, ssc.OutputDir, ssc.Sources)
+	default:
+		return fmt.Errorf("unknown format '%s': supported formats are 'summary' and 'json'", ssc.OutputFormat)
+	}
 }
 
 // DryRunOutput is the complete JSON output structure for dry-run mode.

@@ -336,7 +336,9 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 				config.Slack.ThreadMode)
 		}
 	case "jira":
-		// Add jira-specific validations if needed
+		if config.Jira.JQL == "" && len(config.Jira.ProjectKeys) == 0 {
+			return fmt.Errorf("jira source requires either 'jql' or 'project_keys' to be set")
+		}
 	default:
 		return fmt.Errorf("unsupported source type: %s", config.Type)
 	}

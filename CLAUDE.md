@@ -93,6 +93,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - `gopkg.in/yaml.v3` - YAML configuration parsing
 - `github.com/JohannesKaufmann/html-to-markdown/v2` - HTML to Markdown conversion
 - `github.com/tj/go-naturaldate` - Natural language date parsing
+- `github.com/ankitpokhrel/jira-cli/pkg/jira` - Jira REST API client (V2)
 
 ### Development Tools
 - **golangci-lint v2.0+** - Required for v2 configuration format
@@ -107,7 +108,8 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - ✅ **Gmail** - Fully implemented with multi-instance support, advanced filtering, thread grouping, and performance optimizations
 - ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
 - ✅ **Google Drive** - Fully implemented as a first-class source (`google_drive` type) syncing Docs/Sheets/Slides from folders and shared drives
-- 🔧 **Additional sources** (Slack, Jira) are planned but not yet implemented
+- ✅ **Jira** - Implemented in `internal/sources/jira/` with bearer token auth, JQL query building, comments, and pagination (targets on-premise Jira like issues.redhat.com via V2 API)
+- 🔧 **Slack** is planned but not yet implemented
 
 ### Targets
 - ✅ **Obsidian** - Implemented with YAML frontmatter and hierarchical structure

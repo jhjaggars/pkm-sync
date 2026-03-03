@@ -426,7 +426,8 @@ func TestCreateSource_Unknown(t *testing.T) {
 }
 
 func TestCreateSource_FutureSources(t *testing.T) {
-	futureSources := []string{"slack", "gmail", "jira"}
+	// slack and gmail still route through createSource (deprecated path) and should error
+	futureSources := []string{"slack", "gmail"}
 
 	for _, sourceName := range futureSources {
 		t.Run(sourceName, func(t *testing.T) {
