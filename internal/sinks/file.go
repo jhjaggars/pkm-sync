@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time" //nolint:gci
 
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
@@ -48,7 +49,7 @@ func (s *FileSink) Write(_ context.Context, items []models.FullItem) error {
 
 func (s *FileSink) writeItem(item models.FullItem) error {
 	filename := s.fmt.formatFilename(item.GetTitle())
-	filePath := filepath.Join(s.outputDir, filename)
+	filePath := filepath.Join(s.outputDir, dateSubdirForItem(item), filename)
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
@@ -66,7 +67,7 @@ func (s *FileSink) Preview(items []models.FullItem) ([]*interfaces.FilePreview, 
 
 	for _, item := range items {
 		filename := s.fmt.formatFilename(item.GetTitle())
-		filePath := filepath.Join(s.outputDir, filename)
+		filePath := filepath.Join(s.outputDir, dateSubdirForItem(item), filename)
 		content := s.fmt.formatContent(item)
 
 		action, existingContent, err := logseqDetermineFileAction(filePath, content)
@@ -86,6 +87,53 @@ func (s *FileSink) Preview(items []models.FullItem) ([]*interfaces.FilePreview, 
 	}
 
 	return previews, nil
+}
+
+// dateSubdirForItem returns a YYYY/MM-Month/DD-Weekday path component when the
+// item has a parseable start_time metadata field (calendar events), and an
+// empty string for all other items.
+func dateSubdirForItem(item models.FullItem) string {
+	meta := item.GetMetadata()
+	if meta == nil {
+		return ""
+	}
+
+	raw, ok := meta["start_time"]
+	if !ok {
+		return ""
+	}
+
+	var t time.Time
+
+	switch v := raw.(type) {
+	case time.Time:
+		t = v
+	case string:
+		var err error
+
+		for _, layout := range []string{
+			"2006-01-02 15:04:05 -0700 MST",
+			"2006-01-02T15:04:05Z07:00",
+			"2006-01-02",
+		} {
+			t, err = time.Parse(layout, v)
+			if err == nil {
+				break
+			}
+		}
+
+		if t.IsZero() {
+			return ""
+		}
+	default:
+		return ""
+	}
+
+	return filepath.Join(
+		t.Format("2006"),
+		t.Format("01-January"),
+		t.Format("02-Monday"),
+	)
 }
 
 // Ensure FileSink implements Sink.
