@@ -12,13 +12,12 @@ import (
 
 // SlackChannel represents a Slack channel or DM.
 type SlackChannel struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	IsIM      bool   `json:"is_im"`
-	IsGroup   bool   `json:"is_group"`
-	IsMPIM    bool   `json:"is_mpim"`
-	User      string `json:"user"`       // For IMs: the other user's ID
-	IsStarred bool   `json:"is_starred"` // True if the user has starred this channel
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	IsIM    bool   `json:"is_im"`
+	IsGroup bool   `json:"is_group"`
+	IsMPIM  bool   `json:"is_mpim"`
+	User    string `json:"user"` // For IMs: the other user's ID
 }
 
 // RawMessage is a raw Slack API message object.
@@ -406,10 +405,6 @@ func mapToChannel(m map[string]any, isIM bool) SlackChannel {
 		ch.IsMPIM = v
 	}
 
-	if v, ok := m["is_starred"].(bool); ok {
-		ch.IsStarred = v
-	}
-
 	return ch
 }
 
@@ -432,16 +427,38 @@ func (c *Client) GetMPDMs() ([]SlackChannel, error) {
 }
 
 // GetStarredChannels returns all channels the user has starred.
+// Starred channel IDs are stored in the top-level "starred" array of the boot
+// response, not as a per-channel field.
 func (c *Client) GetStarredChannels() ([]SlackChannel, error) {
-	channels, err := c.GetChannels()
+	boot, err := c.bootData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get boot data: %w", err)
+	}
+
+	// Build set of starred IDs from the top-level "starred" array.
+	starredIDs := make(map[string]bool)
+
+	if raw, ok := boot["starred"].([]any); ok {
+		for _, item := range raw {
+			if id, ok := item.(string); ok {
+				starredIDs[id] = true
+			}
+		}
+	}
+
+	if len(starredIDs) == 0 {
+		return nil, nil
+	}
+
+	allChannels, err := c.GetChannels()
 	if err != nil {
 		return nil, err
 	}
 
 	var starred []SlackChannel
 
-	for _, ch := range channels {
-		if ch.IsStarred {
+	for _, ch := range allChannels {
+		if starredIDs[ch.ID] {
 			starred = append(starred, ch)
 		}
 	}

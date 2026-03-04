@@ -108,5 +108,19 @@ func runSlackChannelsCommand(_ *cobra.Command, _ []string) error {
 
 	fmt.Printf("\nTotal: %d channels\n", len(channels))
 
+	// Show starred channels.
+	fmt.Println("\n=== Starred channels ===")
+
+	starred, err := client.GetStarredChannels()
+	if err != nil {
+		fmt.Printf("  (error fetching starred: %v)\n", err)
+	} else if len(starred) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, ch := range starred {
+			fmt.Printf("  #%s\n", ch.Name)
+		}
+	}
+
 	return nil
 }
