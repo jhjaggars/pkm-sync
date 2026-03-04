@@ -239,6 +239,99 @@ sources:
         - document
 ```
 
+### Slack Source Settings (`sources.{name}.slack:`)
+
+Slack integration uses a bearer token extracted from a browser session (see `pkm-sync slack auth`).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `workspace_url` | string | **required** | Slack workspace URL (e.g. `https://myorg.slack.com`) |
+| `api_url` | string | `""` | Enterprise Grid API override (e.g. `https://myorg.enterprise.slack.com`) |
+| `channels` | array | `[]` | Static list of channel names to sync (e.g. `["general", "engineering"]`) |
+| `channel_groups` | array | `[]` | Dynamic channel groups: `"starred"` or any custom sidebar section name |
+| `include_threads` | boolean | `false` | Fetch thread replies |
+| `include_dms` | boolean | `false` | Include direct messages |
+| `include_group_dms` | boolean | `false` | Include multi-party DMs |
+| `thread_mode` | string | `"individual"` | Thread grouping (individual, consolidated, summary) |
+| `thread_summary_length` | integer | `5` | Max messages shown in summary mode |
+| `exclude_bots` | boolean | `false` | Skip bot messages |
+| `min_length` | integer | `0` | Minimum message character length |
+| `include_files` | boolean | `false` | Include file attachments |
+| `rate_limit_ms` | integer | `500` | Milliseconds between API calls |
+| `max_messages_per_channel` | integer | `0` | Cap per channel (0 = unlimited) |
+
+#### `channel_groups` — dynamic channel resolution
+
+Instead of maintaining a static `channels` list, `channel_groups` resolves channels at sync time:
+
+```yaml
+slack:
+  channel_groups:
+    - starred          # All channels the user has starred in Slack
+    - Priority         # Any custom sidebar section name (case-sensitive)
+    - Teams
+```
+
+- **`"starred"`** — reads the user's starred channel list from the Slack API
+- **Any other name** — matches a custom sidebar section by name (via `users.channelSections.list`)
+
+`channels` and `channel_groups` are additive; duplicates are deduplicated by channel ID at fetch time. Archived channels in the starred list are silently ignored since they don't appear in active channel listings.
+
+**Example configuration:**
+
+```yaml
+sources:
+  slack_work:
+    enabled: true
+    type: slack
+    output_subdir: Slack
+    slack:
+      workspace_url: https://myorg.slack.com
+      channels:
+        - announce-internal       # Always sync this channel
+      channel_groups:
+        - starred                 # Plus all currently-starred channels
+      include_threads: true
+      include_dms: true
+      thread_mode: consolidated
+      exclude_bots: true
+      min_length: 10
+      rate_limit_ms: 500
+      max_messages_per_channel: 500
+```
+
+### Jira Source Settings (`sources.{name}.jira:`)
+
+Jira integration uses bearer token authentication targeting on-premise Jira instances (V2 API).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `instance_url` | string | `""` | Jira instance URL (auto-detected from `~/.config/.jira/.config.yml`) |
+| `jql` | string | `""` | Custom JQL query (required if `project_keys` is empty) |
+| `project_keys` | array | `[]` | Project keys to sync (required if `jql` is empty) |
+| `issue_types` | array | `[]` | Filter by issue type (Bug, Story, Epic, …) |
+| `statuses` | array | `[]` | Filter by status |
+| `assignee_filter` | string | `""` | `"me"` to filter to current user |
+| `include_comments` | boolean | `false` | Include issue comments |
+| `include_history` | boolean | `false` | Include changelog history |
+| `include_attachments` | boolean | `false` | Include attachment metadata |
+
+Auth is read from `~/.config/.jira/.config.yml`, falling back to `JIRA_API_TOKEN` / `JIRA_TOKEN` environment variables.
+
+**Example configuration:**
+
+```yaml
+sources:
+  jira_work:
+    enabled: true
+    type: jira
+    output_subdir: Jira
+    since: 7d
+    jira:
+      jql: assignee = currentUser() OR reporter = currentUser() OR issue in watchedIssues()
+      include_comments: false
+```
+
 ### Enhanced Source Configuration (`sources.{name}:`)
 
 Enhanced source settings support per-instance customization:

@@ -110,7 +110,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
 - ✅ **Google Drive** - Fully implemented as a first-class source (`google_drive` type) syncing Docs/Sheets/Slides from folders and shared drives
 - ✅ **Jira** - Implemented in `internal/sources/jira/` with bearer token auth, JQL query building, comments, and pagination (targets on-premise Jira like issues.redhat.com via V2 API)
-- 🔧 **Slack** is planned but not yet implemented
+- ✅ **Slack** - Implemented in `internal/sources/slack/` with bearer token auth, SQLite archive sink, static `channels` list, dynamic `channel_groups` (`"starred"` + custom sidebar sections), threads, DMs, and interactive TUI configure
 
 ### Targets
 - ✅ **Obsidian** - Implemented with YAML frontmatter and hierarchical structure

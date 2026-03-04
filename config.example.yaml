@@ -26,10 +26,28 @@ sources:
       max_doc_size: "10MB"
       include_shared: true
       
-  slack:
-    enabled: false  # Available for testing when implemented
+  slack_work:
+    enabled: false
     type: slack
     priority: 2
+    output_subdir: Slack
+    slack:
+      workspace_url: https://myorg.slack.com
+      # Static channels are always synced by name:
+      channels:
+        - announce-internal
+      # Dynamic groups resolve at sync time:
+      #   "starred"        → all channels the user has starred
+      #   any other name   → matches a custom Slack sidebar section
+      channel_groups:
+        - starred
+      include_threads: true
+      include_dms: false
+      thread_mode: consolidated   # individual | consolidated | summary
+      exclude_bots: true
+      min_length: 10
+      rate_limit_ms: 500
+      max_messages_per_channel: 500
 
 targets:
   obsidian:

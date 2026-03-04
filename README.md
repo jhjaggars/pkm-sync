@@ -188,6 +188,49 @@ Flags: `--limit` (default 10), `--source-name`, `--source-type`, `--format` (tex
 
 ---
 
+### `slack` — Slack sync
+
+Sync Slack messages to a SQLite archive with full-text search.
+
+```bash
+pkm-sync slack --source slack_work
+pkm-sync slack --source slack_work --since 7d
+pkm-sync slack --source slack_work --dry-run
+pkm-sync slack auth --workspace https://myorg.slack.com   # Authenticate
+pkm-sync slack channels                                    # List channels + starred
+```
+
+Flags: `--source`, `--since`, `--limit` (default 1000), `--dry-run`, `--db-path`
+
+---
+
+### `jira` — Jira sync
+
+Sync Jira issues to PKM files.
+
+```bash
+pkm-sync jira --source jira_work
+pkm-sync jira --source jira_work --since 7d --dry-run
+```
+
+Flags: same as `sync`
+
+---
+
+### `configure` — interactive source configuration
+
+Connects to a source's API and presents a multi-select TUI to pick what to sync.
+
+```bash
+pkm-sync configure                       # Pick from configured sources
+pkm-sync configure slack_redhat          # Configure a specific source
+pkm-sync configure --type slack          # Create a new Slack source interactively
+```
+
+Supports Slack (channels, channel groups, DMs), Gmail (labels), Google Drive (folders), Jira (projects), and Google Calendar (calendars). Shows recent-item previews alongside each option and displays a diff of added/removed items before saving.
+
+---
+
 ### `setup` — verify authentication
 
 ```bash
@@ -215,8 +258,8 @@ Tests connectivity to Google Calendar, Drive, and Gmail. Provides clear error me
 | Gmail | Fully implemented — multi-instance, thread grouping |
 | Google Calendar | Fully implemented |
 | Google Drive | Fully implemented — Docs, Sheets, Slides |
-| Slack | Planned |
-| Jira | Planned |
+| Slack | Fully implemented — bearer token auth, channel groups, threads, DMs |
+| Jira | Fully implemented — JQL queries, comments, bearer token auth |
 
 | Target | Format |
 |--------|--------|
