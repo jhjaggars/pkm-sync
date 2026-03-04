@@ -64,7 +64,8 @@ func (p *SlackProvider) Authenticate(cfg *models.Config, sourceID string) error 
 }
 
 // DiscoverySections implements DiscoveryProvider. It fetches channels and DMs
-// from the Slack API and returns two sections: "Channels" and "Direct Messages".
+// from the Slack API and returns three sections: "Channels", "Channel Groups",
+// and "Messaging".
 func (p *SlackProvider) DiscoverySections(currentConfig models.SourceConfig) ([]DiscoverySection, error) {
 	if p.client == nil {
 		return nil, fmt.Errorf("not authenticated — call Authenticate first")
@@ -76,23 +77,29 @@ func (p *SlackProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 		configuredChannels[ch] = true
 	}
 
+	// Build a set of currently-configured channel groups for pre-selection.
+	configuredGroups := make(map[string]bool, len(currentConfig.Slack.ChannelGroups))
+	for _, g := range currentConfig.Slack.ChannelGroups {
+		configuredGroups[g] = true
+	}
+
 	// Fetch all channels (public channels and private groups).
 	channels, err := p.client.GetChannels()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch Slack channels: %w", err)
 	}
 
+	// "Channels" section: regular channels only (filter out MPDMs).
 	channelOpts := make([]DiscoverableOption, 0, len(channels))
 	for _, ch := range channels {
-		if ch.Name == "" {
-			continue // skip nameless entries
+		if ch.Name == "" || ch.IsMPIM {
+			continue // skip nameless entries and group DMs
 		}
 
 		preview, _ := p.Preview(ch.ID, 3)
 		desc := FormatPreviewDescription(preview)
 
 		channelOpts = append(channelOpts, DiscoverableOption{
-			// The config stores channel names (not IDs), matching how source.go uses them.
 			ID:          ch.Name,
 			Name:        "#" + ch.Name,
 			Description: desc,
@@ -100,62 +107,135 @@ func (p *SlackProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 		})
 	}
 
-	// Fetch DMs.
+	// "Channel Groups" section: starred + custom sidebar sections.
+	groupOpts := p.buildChannelGroupOptions(configuredGroups)
+
+	// "Messaging" section: two synthetic toggles.
+	// Get a preview from the first DM for the DM toggle description.
+	var dmDesc string
+
 	dms, err := p.client.GetDMs()
-	if err != nil {
-		// Non-fatal: log and continue without DMs section.
-		dms = nil
+	if err == nil && len(dms) > 0 {
+		preview, _ := p.Preview(dms[0].ID, 1)
+		dmDesc = FormatPreviewDescription(preview)
 	}
 
-	dmOpts := make([]DiscoverableOption, 0, len(dms))
-	for _, dm := range dms {
-		name := dm.Name
-		if name == "" {
-			name = dm.User // fall back to user ID
-		}
+	// Get a preview from the first MPDM for the group DM toggle description.
+	var mpdmDesc string
 
-		preview, _ := p.Preview(dm.ID, 3)
-		desc := FormatPreviewDescription(preview)
-
-		dmOpts = append(dmOpts, DiscoverableOption{
-			ID:          dm.ID,
-			Name:        name,
-			Description: desc,
-			// DMs are toggled separately via IncludeDMs; individual DMs are not listed in Channels.
-			Selected: currentConfig.Slack.IncludeDMs,
-		})
+	mpdms, err := p.client.GetMPDMs()
+	if err == nil && len(mpdms) > 0 {
+		preview, _ := p.Preview(mpdms[0].ID, 1)
+		mpdmDesc = FormatPreviewDescription(preview)
 	}
 
-	sections := []DiscoverySection{
+	messagingOpts := []DiscoverableOption{
+		{
+			ID:          "__include_dms__",
+			Name:        "Direct messages (1:1)",
+			Description: dmDesc,
+			Selected:    currentConfig.Slack.IncludeDMs,
+		},
+		{
+			ID:          "__include_group_dms__",
+			Name:        "Group messages (multi-party)",
+			Description: mpdmDesc,
+			Selected:    currentConfig.Slack.IncludeGroupDMs,
+		},
+	}
+
+	return []DiscoverySection{
 		{
 			Name:        "Channels",
 			Description: "Select the Slack channels you want to sync",
 			Options:     channelOpts,
 		},
+		{
+			Name:        "Channel Groups",
+			Description: "Sync all channels in a dynamic group (starred or sidebar section)",
+			Options:     groupOpts,
+		},
+		{
+			Name:        "Messaging",
+			Description: "Toggle direct and group message syncing",
+			Options:     messagingOpts,
+		},
+	}, nil
+}
+
+// buildChannelGroupOptions constructs the options for the "Channel Groups" section.
+func (p *SlackProvider) buildChannelGroupOptions(configuredGroups map[string]bool) []DiscoverableOption {
+	var opts []DiscoverableOption
+
+	// Starred channels option.
+	starredChannels, _ := p.client.GetStarredChannels()
+	starredDesc := fmt.Sprintf("%d starred channels", len(starredChannels))
+
+	opts = append(opts, DiscoverableOption{
+		ID:          "__group_starred__",
+		Name:        "Starred channels",
+		Description: starredDesc,
+		Selected:    configuredGroups["starred"],
+	})
+
+	// Custom sidebar sections.
+	sections, err := p.client.GetChannelSections()
+	if err == nil {
+		for name, ids := range sections {
+			opts = append(opts, DiscoverableOption{
+				ID:          "__group_section__" + name,
+				Name:        name,
+				Description: fmt.Sprintf("%d channels", len(ids)),
+				Selected:    configuredGroups[name],
+			})
+		}
 	}
 
-	if len(dmOpts) > 0 {
-		sections = append(sections, DiscoverySection{
-			Name:        "Direct Messages",
-			Description: "Select direct message conversations to include",
-			Options:     dmOpts,
-		})
-	}
-
-	return sections, nil
+	return opts
 }
 
 // ApplySelections implements DiscoveryProvider. It updates the SourceConfig in-place.
 //
 // For the "Channels" section the selected IDs are channel names (as that is what
-// the Slack source's FindChannel function expects). For "Direct Messages" we set
-// IncludeDMs to true if any DMs were selected.
+// the Slack source's FindChannel function expects). For "Messaging" we set the
+// appropriate toggle flags based on which synthetic IDs were selected.
 func (p *SlackProvider) ApplySelections(cfg *models.SourceConfig, sectionName string, selectedIDs []string) {
 	switch sectionName {
 	case "Channels":
-		cfg.Slack.Channels = selectedIDs
-	case "Direct Messages":
-		cfg.Slack.IncludeDMs = len(selectedIDs) > 0
+		// Filter out any mpdm-* names that may have been stored from old configs.
+		filtered := make([]string, 0, len(selectedIDs))
+
+		for _, id := range selectedIDs {
+			if !strings.HasPrefix(id, "mpdm-") {
+				filtered = append(filtered, id)
+			}
+		}
+
+		cfg.Slack.Channels = filtered
+	case "Channel Groups":
+		cfg.Slack.ChannelGroups = nil
+
+		for _, id := range selectedIDs {
+			switch {
+			case id == "__group_starred__":
+				cfg.Slack.ChannelGroups = append(cfg.Slack.ChannelGroups, "starred")
+			case strings.HasPrefix(id, "__group_section__"):
+				name := strings.TrimPrefix(id, "__group_section__")
+				cfg.Slack.ChannelGroups = append(cfg.Slack.ChannelGroups, name)
+			}
+		}
+	case "Messaging":
+		cfg.Slack.IncludeDMs = false
+		cfg.Slack.IncludeGroupDMs = false
+
+		for _, id := range selectedIDs {
+			switch id {
+			case "__include_dms__":
+				cfg.Slack.IncludeDMs = true
+			case "__include_group_dms__":
+				cfg.Slack.IncludeGroupDMs = true
+			}
+		}
 	}
 }
 

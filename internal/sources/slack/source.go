@@ -119,6 +119,18 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 		channelsToSync = append(channelsToSync, *ch)
 	}
 
+	// Resolve channel groups (e.g. "starred", custom sidebar sections).
+	for _, group := range s.cfg.ChannelGroups {
+		groupChannels, err := s.client.GetChannelsByGroup(group)
+		if err != nil {
+			fmt.Printf("Warning: failed to resolve channel group %q: %v\n", group, err)
+
+			continue
+		}
+
+		channelsToSync = append(channelsToSync, groupChannels...)
+	}
+
 	// Optionally include DMs.
 	if s.cfg.IncludeDMs {
 		dms, err := s.client.GetDMs()
@@ -128,6 +140,29 @@ func (s *SlackSource) Fetch(since time.Time, limit int) ([]models.FullItem, erro
 			channelsToSync = append(channelsToSync, dms...)
 		}
 	}
+
+	// Optionally include group DMs (MPDMs).
+	if s.cfg.IncludeGroupDMs {
+		mpdms, err := s.client.GetMPDMs()
+		if err != nil {
+			fmt.Printf("Warning: failed to fetch Slack group DMs: %v\n", err)
+		} else {
+			channelsToSync = append(channelsToSync, mpdms...)
+		}
+	}
+
+	// Deduplicate channels by ID to prevent double-fetching.
+	seen := make(map[string]bool, len(channelsToSync))
+	deduped := make([]SlackChannel, 0, len(channelsToSync))
+
+	for _, ch := range channelsToSync {
+		if !seen[ch.ID] {
+			seen[ch.ID] = true
+			deduped = append(deduped, ch)
+		}
+	}
+
+	channelsToSync = deduped
 
 	for _, ch := range channelsToSync {
 		items, err := s.fetchChannel(ch, oldest, maxPerChannel)
@@ -153,6 +188,10 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 	channelName := ch.Name
 	if ch.IsIM && channelName == "" {
 		channelName = s.userCache.ResolveUser(ch.User, s.client)
+	}
+
+	if ch.IsMPIM && channelName == "" {
+		channelName = ch.ID
 	}
 
 	// Paginate through message history.
@@ -212,9 +251,13 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 		author := resolveAuthor(msg, s.userCache, s.client)
 		item := FromSlackMessage(msg, ch.ID, channelName, s.cfg.WorkspaceURL, author, false)
 
-		// Tag DMs additionally.
+		// Tag DMs and group DMs additionally.
 		if ch.IsIM {
 			item.Tags = append(item.Tags, fmt.Sprintf("dm:%s", channelName))
+		}
+
+		if ch.IsMPIM {
+			item.Tags = append(item.Tags, fmt.Sprintf("mpdm:%s", channelName))
 		}
 
 		items = append(items, item)
@@ -254,6 +297,10 @@ func (s *SlackSource) fetchReplies(ch SlackChannel, msg *RawMessage, channelName
 
 		if ch.IsIM {
 			replyItem.Tags = append(replyItem.Tags, fmt.Sprintf("dm:%s", channelName))
+		}
+
+		if ch.IsMPIM {
+			replyItem.Tags = append(replyItem.Tags, fmt.Sprintf("mpdm:%s", channelName))
 		}
 
 		items = append(items, replyItem)

@@ -12,11 +12,13 @@ import (
 
 // SlackChannel represents a Slack channel or DM.
 type SlackChannel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	IsIM    bool   `json:"is_im"`
-	IsGroup bool   `json:"is_group"`
-	User    string `json:"user"` // For IMs: the other user's ID
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsIM      bool   `json:"is_im"`
+	IsGroup   bool   `json:"is_group"`
+	IsMPIM    bool   `json:"is_mpim"`
+	User      string `json:"user"`       // For IMs: the other user's ID
+	IsStarred bool   `json:"is_starred"` // True if the user has starred this channel
 }
 
 // RawMessage is a raw Slack API message object.
@@ -40,6 +42,7 @@ type Client struct {
 	apiBaseURL   string
 	httpClient   *http.Client
 	rateLimitMs  int
+	cachedBoot   map[string]any // cached client.userBoot response
 }
 
 // NewClient creates a new Slack API client.
@@ -150,14 +153,26 @@ func (c *Client) CallAPI(method string, params map[string]string) (map[string]an
 	}
 }
 
-// bootData calls client.userBoot and returns the raw response.
+// bootData calls client.userBoot and returns the raw response. The result is
+// cached so subsequent calls within the same sync cycle avoid extra API round-trips.
 func (c *Client) bootData() (map[string]any, error) {
-	return c.CallAPI("client.userBoot", map[string]string{
+	if c.cachedBoot != nil {
+		return c.cachedBoot, nil
+	}
+
+	result, err := c.CallAPI("client.userBoot", map[string]string{
 		"_x_reason":                 "webapp_start",
 		"version_all_channels":      "0",
 		"return_all_relevant_mpdms": "true",
 		"min_channel_updated":       "0",
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	c.cachedBoot = result
+
+	return result, nil
 }
 
 // BootKeys returns the top-level keys from the client.userBoot response.
@@ -387,7 +402,157 @@ func mapToChannel(m map[string]any, isIM bool) SlackChannel {
 		ch.IsGroup = v
 	}
 
+	if v, ok := m["is_mpim"].(bool); ok {
+		ch.IsMPIM = v
+	}
+
+	if v, ok := m["is_starred"].(bool); ok {
+		ch.IsStarred = v
+	}
+
 	return ch
+}
+
+// GetMPDMs returns all multi-party DM (group message) channels from the workspace.
+func (c *Client) GetMPDMs() ([]SlackChannel, error) {
+	channels, err := c.GetChannels()
+	if err != nil {
+		return nil, err
+	}
+
+	var mpdms []SlackChannel
+
+	for _, ch := range channels {
+		if ch.IsMPIM {
+			mpdms = append(mpdms, ch)
+		}
+	}
+
+	return mpdms, nil
+}
+
+// GetStarredChannels returns all channels the user has starred.
+func (c *Client) GetStarredChannels() ([]SlackChannel, error) {
+	channels, err := c.GetChannels()
+	if err != nil {
+		return nil, err
+	}
+
+	var starred []SlackChannel
+
+	for _, ch := range channels {
+		if ch.IsStarred {
+			starred = append(starred, ch)
+		}
+	}
+
+	return starred, nil
+}
+
+// GetChannelSections returns a map of sidebar section name → channel IDs.
+// It first checks cached boot data for a "channel_sections" key, then falls
+// back to calling users.channelSections.list.
+func (c *Client) GetChannelSections() (map[string][]string, error) {
+	boot, err := c.bootData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get boot data: %w", err)
+	}
+
+	sections := parseSectionsFromBoot(boot)
+	if len(sections) > 0 {
+		return sections, nil
+	}
+
+	// Fallback: explicit API call.
+	result, err := c.CallAPI("users.channelSections.list", map[string]string{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list channel sections: %w", err)
+	}
+
+	if ok, _ := result["ok"].(bool); ok {
+		sections = parseSectionsFromBoot(result)
+	}
+
+	return sections, nil
+}
+
+// parseSectionsFromBoot extracts the "channel_sections" array from a raw API
+// response (boot data or users.channelSections.list) and returns a name → IDs map.
+func parseSectionsFromBoot(data map[string]any) map[string][]string {
+	sections := make(map[string][]string)
+
+	raw, ok := data["channel_sections"].([]any)
+	if !ok {
+		return sections
+	}
+
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		name, _ := m["name"].(string)
+		if name == "" {
+			continue
+		}
+
+		// The field may be "channel_ids_page" or "channel_ids".
+		var idSlice []any
+
+		if ids, ok := m["channel_ids_page"].([]any); ok {
+			idSlice = ids
+		} else if ids, ok := m["channel_ids"].([]any); ok {
+			idSlice = ids
+		}
+
+		for _, id := range idSlice {
+			if s, ok := id.(string); ok {
+				sections[name] = append(sections[name], s)
+			}
+		}
+	}
+
+	return sections
+}
+
+// GetChannelsByGroup resolves a named channel group to a list of SlackChannel objects.
+// "starred" resolves to all starred channels; any other name matches a Slack sidebar
+// section by name.
+func (c *Client) GetChannelsByGroup(group string) ([]SlackChannel, error) {
+	if group == "starred" {
+		return c.GetStarredChannels()
+	}
+
+	sections, err := c.GetChannelSections()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get channel sections: %w", err)
+	}
+
+	ids, ok := sections[group]
+	if !ok {
+		return nil, fmt.Errorf("channel group %q not found in sidebar sections", group)
+	}
+
+	allChannels, err := c.GetChannels()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get channels: %w", err)
+	}
+
+	byID := make(map[string]SlackChannel, len(allChannels))
+	for _, ch := range allChannels {
+		byID[ch.ID] = ch
+	}
+
+	result := make([]SlackChannel, 0, len(ids))
+
+	for _, id := range ids {
+		if ch, ok := byID[id]; ok {
+			result = append(result, ch)
+		}
+	}
+
+	return result, nil
 }
 
 func parseMessages(raw any) ([]RawMessage, error) {

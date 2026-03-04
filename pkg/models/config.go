@@ -239,11 +239,12 @@ type SlackSourceConfig struct {
 	APIUrl       string `json:"api_url"       yaml:"api_url"`       // optional Enterprise Grid override
 
 	// Channel settings
-	WorkspaceID    string   `json:"workspace_id"    yaml:"workspace_id"` // legacy field
-	Channels       []string `json:"channels"        yaml:"channels"`     // ["general", "engineering"]
-	IncludeThreads bool     `json:"include_threads" yaml:"include_threads"`
-	IncludeDMs     bool     `json:"include_dms"     yaml:"include_dms"`
-	MinImportance  string   `json:"min_importance"  yaml:"min_importance"` // "starred", "mentions", "all"
+	WorkspaceID     string   `json:"workspace_id"      yaml:"workspace_id"`   // legacy field
+	Channels        []string `json:"channels"          yaml:"channels"`       // ["general", "engineering"]
+	ChannelGroups   []string `json:"channel_groups"    yaml:"channel_groups"` // ["starred", "Priority"]
+	IncludeThreads  bool     `json:"include_threads"   yaml:"include_threads"`
+	IncludeDMs      bool     `json:"include_dms"       yaml:"include_dms"`
+	IncludeGroupDMs bool     `json:"include_group_dms" yaml:"include_group_dms"`
 
 	// Thread settings: "individual", "consolidated", "summary"
 	ThreadMode          string `json:"thread_mode"           yaml:"thread_mode"`

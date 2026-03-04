@@ -326,8 +326,11 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 			return fmt.Errorf("workspace_url is required for slack sources")
 		}
 
-		if len(config.Slack.Channels) == 0 && !config.Slack.IncludeDMs {
-			return fmt.Errorf("at least one channel or include_dms must be set for slack sources")
+		if len(config.Slack.Channels) == 0 && len(config.Slack.ChannelGroups) == 0 &&
+			!config.Slack.IncludeDMs && !config.Slack.IncludeGroupDMs {
+			return fmt.Errorf(
+				"at least one channel, channel_groups, include_dms, or include_group_dms must be set for slack sources",
+			)
 		}
 
 		validThreadModes := map[string]bool{"individual": true, "consolidated": true, "summary": true, "": true}
