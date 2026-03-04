@@ -249,6 +249,49 @@ func (s *Service) GetLabels() ([]*gmail.Label, error) {
 	return resp.Labels, nil
 }
 
+// GetRecentSubjects returns up to limit recent email subjects matching the given Gmail query.
+// It fetches only message metadata (Subject header) to minimize quota usage.
+func (s *Service) GetRecentSubjects(query string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	listResp, err := s.service.Users.Messages.List("me").Q(query).MaxResults(int64(limit)).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list messages: %w", err)
+	}
+
+	if listResp == nil || len(listResp.Messages) == 0 {
+		return nil, nil
+	}
+
+	subjects := make([]string, 0, len(listResp.Messages))
+
+	for _, m := range listResp.Messages {
+		msg, err := s.service.Users.Messages.Get("me", m.Id).
+			Format("metadata").
+			MetadataHeaders("Subject").
+			Do()
+		if err != nil {
+			continue
+		}
+
+		if msg.Payload == nil {
+			continue
+		}
+
+		for _, h := range msg.Payload.Headers {
+			if h.Name == "Subject" {
+				subjects = append(subjects, h.Value)
+
+				break
+			}
+		}
+	}
+
+	return subjects, nil
+}
+
 // GetProfile retrieves the user's Gmail profile information.
 func (s *Service) GetProfile() (*gmail.Profile, error) {
 	req := s.service.Users.GetProfile("me")

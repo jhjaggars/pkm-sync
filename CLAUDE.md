@@ -94,6 +94,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - `github.com/JohannesKaufmann/html-to-markdown/v2` - HTML to Markdown conversion
 - `github.com/tj/go-naturaldate` - Natural language date parsing
 - `github.com/ankitpokhrel/jira-cli/pkg/jira` - Jira REST API client (V2)
+- `github.com/charmbracelet/huh` - Terminal form/TUI library (used by `configure` command)
 
 ### Development Tools
 - **golangci-lint v2.0+** - Required for v2 configuration format
@@ -145,6 +146,16 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - Example: `pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md`
 
 ### Utility Commands
+- **`configure [source-name]`** - Interactively configure what to sync from each source
+  - Connects to the source API, shows available options with recent-item previews
+  - Multi-select TUI powered by `github.com/charmbracelet/huh`
+  - Supports Slack (channels/DMs), Gmail (labels), Google Drive (folders/shared drives), Jira (projects/issue types/statuses), Google Calendar (calendars)
+  - Shows a diff of added/removed items before saving
+  - Example: `pkm-sync configure` — pick from configured sources
+  - Example: `pkm-sync configure slack_redhat` — configure a specific source
+  - Example: `pkm-sync configure --type slack` — create a new Slack source interactively
+  - Requires an interactive TTY; gracefully errors if run piped/in scripts
+
 - **`setup`** - Verify authentication configuration
   - Tests all Google services (Calendar, Drive, Gmail)
   - Provides clear error messages and instructions

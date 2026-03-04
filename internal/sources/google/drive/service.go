@@ -571,6 +571,52 @@ func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdow
 	return string(data), nil
 }
 
+// ListFolders returns all folders in the given parent folder.
+// An empty parentID returns folders from the Drive root without a parent filter.
+func (s *Service) ListFolders(parentID string) ([]*DriveFileInfo, error) {
+	opts := ListFilesOptions{
+		MimeTypes: []string{"application/vnd.google-apps.folder"},
+	}
+
+	if parentID != "" {
+		opts.FolderID = parentID
+	}
+
+	return s.ListFiles(opts)
+}
+
+// ListSharedDrives returns all shared drives accessible to the authenticated user.
+func (s *Service) ListSharedDrives() ([]*SharedDriveInfo, error) {
+	var drives []*SharedDriveInfo
+
+	pageToken := ""
+
+	for {
+		req := s.client.Drives.List().PageSize(100)
+
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
+		}
+
+		result, err := req.Do()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list shared drives: %w", err)
+		}
+
+		for _, d := range result.Drives {
+			drives = append(drives, &SharedDriveInfo{ID: d.Id, Name: d.Name})
+		}
+
+		if result.NextPageToken == "" {
+			break
+		}
+
+		pageToken = result.NextPageToken
+	}
+
+	return drives, nil
+}
+
 // convertFileInfo converts a Drive API File object to a DriveFileInfo.
 func convertFileInfo(f *drive.File) *DriveFileInfo {
 	info := &DriveFileInfo{

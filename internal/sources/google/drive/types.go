@@ -36,3 +36,9 @@ type DriveFileInfo struct {
 	Description  string
 	Starred      bool
 }
+
+// SharedDriveInfo holds metadata for a Google Shared Drive.
+type SharedDriveInfo struct {
+	ID   string
+	Name string
+}

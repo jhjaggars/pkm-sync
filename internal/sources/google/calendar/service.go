@@ -215,4 +215,30 @@ func (s *Service) ConvertToModelWithDrive(event *calendar.Event) *models.Calenda
 	return s.ConvertToModel(event)
 }
 
-// DriveServiceInterface defines the interface for drive service operations needed by calendar
+// DriveServiceInterface defines the interface for drive service operations needed by calendar.
+
+// CalendarInfo holds basic calendar metadata for discovery.
+type CalendarInfo struct {
+	ID      string
+	Summary string // human-readable name
+	Primary bool
+}
+
+// ListCalendars returns all calendars the authenticated user has access to.
+func (s *Service) ListCalendars() ([]*CalendarInfo, error) {
+	resp, err := s.calendarService.CalendarList.List().Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list calendars: %w", err)
+	}
+
+	calendars := make([]*CalendarInfo, 0, len(resp.Items))
+	for _, item := range resp.Items {
+		calendars = append(calendars, &CalendarInfo{
+			ID:      item.Id,
+			Summary: item.Summary,
+			Primary: item.Primary,
+		})
+	}
+
+	return calendars, nil
+}
