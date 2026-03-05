@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"pkm-sync/internal/sources/google"
 	jirasource "pkm-sync/internal/sources/jira"
 	slacksource "pkm-sync/internal/sources/slack"
+	"pkm-sync/internal/state"
 	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/transform"
 	"pkm-sync/pkg/interfaces"
@@ -176,13 +179,12 @@ func gmailFetcherFromEntries(entries []syncer.SourceEntry) sinks.RawMessageFetch
 	return nil
 }
 
-// maybeCreateVectorSink creates a VectorSink when auto_index is enabled in config.
-// Returns nil, nil when auto_index is false. The caller must call Close() on non-nil results.
-func maybeCreateVectorSink(cfg *models.Config) (*sinks.VectorSink, error) {
-	if !cfg.VectorDB.AutoIndex {
-		return nil, nil
-	}
-
+// createVectorSink creates the VectorSink that is always active during syncs.
+// When no embedding provider is configured the sink runs in metadata-only mode:
+// document rows (including timestamps) are still written to vectors.db so that
+// inferLastSynced can determine the incremental since window.
+// The caller must call Close() on the returned sink.
+func createVectorSink(cfg *models.Config) (*sinks.VectorSink, error) {
 	dbPath := cfg.VectorDB.DBPath
 	if dbPath == "" {
 		configDir, err := config.GetConfigDir()
@@ -197,6 +199,51 @@ func maybeCreateVectorSink(cfg *models.Config) (*sinks.VectorSink, error) {
 		DBPath:        dbPath,
 		EmbeddingsCfg: cfg.Embeddings,
 	})
+}
+
+// resolveVectorDBPath returns the configured path to vectors.db (or the default).
+func resolveVectorDBPath(cfg *models.Config) (string, error) {
+	if cfg.VectorDB.DBPath != "" {
+		return cfg.VectorDB.DBPath, nil
+	}
+
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	return filepath.Join(configDir, "vectors.db"), nil
+}
+
+// inferLastSynced queries vectors.db for the maximum item timestamp recorded
+// for sourceName. Returns zero time when no documents exist for the source yet.
+func inferLastSynced(dbPath, sourceName string) (time.Time, error) {
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("opening vector db: %w", err)
+	}
+
+	defer db.Close()
+
+	var tsStr sql.NullString
+
+	if err := db.QueryRow(
+		"SELECT MAX(updated_at) FROM documents WHERE source_name = ?",
+		sourceName,
+	).Scan(&tsStr); err != nil {
+		return time.Time{}, fmt.Errorf("querying max timestamp for %s: %w", sourceName, err)
+	}
+
+	if !tsStr.Valid {
+		return time.Time{}, nil // no documents yet — caller will use default since
+	}
+
+	t, err := time.Parse(time.RFC3339, tsStr.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing timestamp %q: %w", tsStr.String, err)
+	}
+
+	return t, nil
 }
 
 // getEnabledSources returns enabled source names from config.
@@ -268,6 +315,49 @@ func getEnabledDriveSources(cfg *models.Config) []string {
 	return enabledSources
 }
 
+// getSourceSubItems returns the identifiable sub-item keys for a source that
+// represent distinct data scopes (project keys, channel IDs, folder IDs, …).
+// Returning a non-empty slice enables sub-item change detection: if the current
+// config contains keys absent from the state's KnownSubItems list, those new
+// keys trigger a full-window lookback instead of an incremental sync.
+// Returns nil for source types where sub-item tracking is not applicable.
+func getSourceSubItems(sourceType string, sourceConfig models.SourceConfig) []string {
+	var items []string
+
+	switch sourceType {
+	case "jira":
+		items = append(items, sourceConfig.Jira.ProjectKeys...)
+
+	case "slack":
+		items = append(items, sourceConfig.Slack.Channels...)
+		items = append(items, sourceConfig.Slack.ChannelGroups...)
+
+	case "gmail":
+		items = append(items, sourceConfig.Gmail.Labels...)
+		if q := sourceConfig.Gmail.Query; q != "" {
+			items = append(items, "query:"+q)
+		}
+
+	case "google_calendar":
+		if calID := sourceConfig.Google.CalendarID; calID != "" {
+			items = append(items, calID)
+		} else {
+			items = append(items, "primary")
+		}
+
+	case "google_drive":
+		items = append(items, sourceConfig.Drive.FolderIDs...)
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	sort.Strings(items)
+
+	return items
+}
+
 // getSourceOutputDirectory calculates output directory for a source.
 func getSourceOutputDirectory(baseOutputDir string, sourceConfig models.SourceConfig) string {
 	if sourceConfig.OutputSubdir != "" {
@@ -296,6 +386,12 @@ type sourceSyncConfig struct {
 	// runSourceSync calls. When set, runSourceSync uses it instead of creating its own
 	// and does NOT close it — the caller owns the lifetime.
 	SharedVectorSink *sinks.VectorSink
+
+	// SyncState is an optional pre-loaded sync state shared across concurrent
+	// runSourceSync calls (used by the sync command). When non-nil, runSourceSync
+	// reads from and writes to this state but does NOT save it — the caller owns
+	// the save. When nil, runSourceSync loads and saves its own state.
+	SyncState *state.SyncState
 }
 
 // runSourceSync executes the full sync pipeline for a specific source type.
@@ -309,7 +405,35 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	fmt.Printf("Syncing %s from sources [%s] to %s (output: %s, since: %s)\n",
 		ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.TargetName, ssc.OutputDir, ssc.Since)
 
+	// Resolve the vector DB path for incremental since-time inference and for
+	// sub-item state tracking.
+	configDir, configDirErr := config.GetConfigDir()
+	vectorDBPath, vectorDBPathErr := resolveVectorDBPath(cfg)
+
+	// Load sub-item state. When a shared SyncState is provided by the caller
+	// (sync command), use it directly; the caller saves it. Otherwise load and
+	// save our own copy.
+	syncState := ssc.SyncState
+	ownedState := false // true = we loaded this state ourselves
+
+	if syncState == nil && configDirErr == nil {
+		var loadErr error
+
+		syncState, loadErr = state.Load(configDir)
+		if loadErr != nil {
+			fmt.Printf("Warning: failed to load sync state: %v; starting fresh\n", loadErr)
+
+			syncState = state.New()
+		}
+
+		ownedState = true
+	}
+
 	entries := make([]syncer.SourceEntry, 0, len(ssc.Sources))
+	// sourceSubItems maps each source name to its current config sub-items
+	// (project keys, channel IDs, etc.). Populated during entry building and
+	// used after the sync to persist the current set in state.
+	sourceSubItems := make(map[string][]string, len(ssc.Sources))
 
 	for _, srcName := range ssc.Sources {
 		sourceConfig, exists := cfg.Sources[srcName]
@@ -340,6 +464,10 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 		entry := syncer.SourceEntry{Name: srcName, Src: src}
 
+		// Record current sub-items for post-sync state update.
+		currentSubItems := getSourceSubItems(ssc.SourceType, sourceConfig)
+		sourceSubItems[srcName] = currentSubItems
+
 		// Per-source since: config overrides default, but CLI flag takes precedence.
 		if sourceConfig.Since != "" && ssc.SinceFlag == "" {
 			t, err := parseSinceTime(sourceConfig.Since)
@@ -347,6 +475,32 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 				fmt.Printf("Warning: invalid since time for source '%s': %v, using default\n", srcName, err)
 			} else {
 				entry.Since = t
+			}
+		}
+
+		// Fall back to data-inferred incremental since when no explicit CLI or
+		// config per-source override is set. We query vectors.db for the maximum
+		// item timestamp already stored for this source — anchoring the window to
+		// the actual data rather than to the wall-clock time of a previous sync.
+		if entry.Since.IsZero() && ssc.SinceFlag == "" && vectorDBPathErr == nil {
+			if lastSynced, err := inferLastSynced(vectorDBPath, srcName); err != nil {
+				fmt.Printf("  → %s: could not infer last sync time: %v; using default window\n", srcName, err)
+			} else if !lastSynced.IsZero() {
+				entry.Since = lastSynced.Add(-state.SinceOverlap)
+				fmt.Printf("  → %s: incremental sync from %s\n", srcName, lastSynced.UTC().Format(time.RFC3339))
+			}
+		}
+
+		// If we set an incremental since time, check whether new sub-items have
+		// been added to the source config since the last sync. New sub-items
+		// (e.g. a newly added Jira project or Slack channel) have no history in
+		// the incremental window, so we reset to zero and let the source fetch
+		// from the full default lookback window instead.
+		if !entry.Since.IsZero() && syncState != nil {
+			if newItems := syncState.NewSubItems(srcName, currentSubItems); len(newItems) > 0 {
+				entry.Since = time.Time{} // zero → use defaultSinceTime
+
+				fmt.Printf("  → %s: new sub-items %v detected, using full lookback window\n", srcName, newItems)
 			}
 		}
 
@@ -409,14 +563,12 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	// otherwise create a dedicated one for single-source commands.
 	vectorSink := ssc.SharedVectorSink
 	if vectorSink == nil {
-		vectorSink, err = maybeCreateVectorSink(cfg)
+		vectorSink, err = createVectorSink(cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create vector sink: %w", err)
 		}
 
-		if vectorSink != nil {
-			defer vectorSink.Close()
-		}
+		defer vectorSink.Close()
 	}
 
 	if vectorSink != nil {
@@ -479,6 +631,34 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 	if ssc.DryRun {
 		return handleDryRun(ssc, fileSink, syncResult.Items)
+	}
+
+	// Update sub-item membership in state for each successfully synced source.
+	// Timestamps are NOT stored here — they are inferred at the next sync by
+	// querying vectors.db (MAX(updated_at) per source_name), which is always
+	// written by the VectorSink.
+	if syncState == nil {
+		fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)
+
+		return nil
+	}
+
+	for _, r := range syncResult.SourceResults {
+		if r.Err != nil {
+			continue
+		}
+
+		if subItems, ok := sourceSubItems[r.Name]; ok {
+			syncState.UpdateSubItems(r.Name, subItems)
+		}
+	}
+
+	// Save only when we own the state (individual command path).
+	// The sync command saves its shared state after all groups complete.
+	if ownedState {
+		if saveErr := syncState.Save(configDir); saveErr != nil {
+			fmt.Printf("Warning: failed to save sync state: %v\n", saveErr)
+		}
 	}
 
 	fmt.Printf("Successfully exported %d %s\n", len(syncResult.Items), ssc.ItemKind)

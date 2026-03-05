@@ -132,7 +132,7 @@ func GetDefaultConfig() *models.Config {
 		},
 		VectorDB: models.VectorDBConfig{
 			DBPath:    "", // Will be resolved to ~/.config/pkm-sync/vectors.db at runtime
-			AutoIndex: false,
+			AutoIndex: true,
 		},
 		Embeddings: models.EmbeddingsConfig{
 			Provider:   "ollama",

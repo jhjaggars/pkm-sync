@@ -91,8 +91,10 @@ func NewStore(dbPath string, dimensions int) (*Store, error) {
 }
 
 // createSchema creates the database schema if it doesn't exist.
+// The vec_documents virtual table is only created when dimensions > 0 — it is
+// not needed for metadata-only mode (no embedding provider configured).
 func (s *Store) createSchema() error {
-	schema := fmt.Sprintf(`
+	baseSchema := `
 		CREATE TABLE IF NOT EXISTS documents (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id     TEXT NOT NULL,
@@ -112,21 +114,34 @@ func (s *Store) createSchema() error {
 		CREATE INDEX IF NOT EXISTS idx_documents_thread_id ON documents(thread_id);
 		CREATE INDEX IF NOT EXISTS idx_documents_source_name ON documents(source_name);
 		CREATE INDEX IF NOT EXISTS idx_documents_source_type ON documents(source_type);
+	`
 
-		CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
-			document_id INTEGER PRIMARY KEY,
-			embedding float[%d]
-		);
-	`, s.dimensions)
+	if _, err := s.db.Exec(baseSchema); err != nil {
+		return err
+	}
 
-	_, err := s.db.Exec(schema)
+	if s.dimensions > 0 {
+		vecSchema := fmt.Sprintf(`
+			CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
+				document_id INTEGER PRIMARY KEY,
+				embedding float[%d]
+			);
+		`, s.dimensions)
 
-	return err
+		if _, err := s.db.Exec(vecSchema); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-// UpsertDocument inserts or updates a document with its embedding.
+// UpsertDocument inserts or updates a document and, when a non-nil embedding
+// is provided, stores it in vec_documents for semantic search. Passing nil (or
+// an empty slice) writes the document metadata only — useful when no embedding
+// provider is configured but timestamp tracking is still needed.
 func (s *Store) UpsertDocument(doc Document, embedding []float32) error {
-	if len(embedding) != s.dimensions {
+	if len(embedding) > 0 && len(embedding) != s.dimensions {
 		return fmt.Errorf("embedding dimensions mismatch: expected %d, got %d", s.dimensions, len(embedding))
 	}
 
@@ -184,22 +199,22 @@ func (s *Store) UpsertDocument(doc Document, embedding []float32) error {
 		}
 	}
 
-	// Convert embedding to binary format for sqlite-vec
-	embeddingBytes, err := float32SliceToBytes(embedding)
-	if err != nil {
-		return fmt.Errorf("failed to convert embedding to bytes: %w", err)
-	}
+	// Store the embedding in vec_documents only when one is provided.
+	if len(embedding) > 0 {
+		embeddingBytes, err := float32SliceToBytes(embedding)
+		if err != nil {
+			return fmt.Errorf("failed to convert embedding to bytes: %w", err)
+		}
 
-	// Delete existing embedding if present (vec0 doesn't support UPSERT)
-	_, err = tx.Exec("DELETE FROM vec_documents WHERE document_id = ?", docID)
-	if err != nil {
-		return fmt.Errorf("failed to delete old embedding: %w", err)
-	}
+		// Delete existing embedding if present (vec0 doesn't support UPSERT)
+		if _, err = tx.Exec("DELETE FROM vec_documents WHERE document_id = ?", docID); err != nil {
+			return fmt.Errorf("failed to delete old embedding: %w", err)
+		}
 
-	// Insert new embedding
-	_, err = tx.Exec("INSERT INTO vec_documents (document_id, embedding) VALUES (?, ?)", docID, embeddingBytes)
-	if err != nil {
-		return fmt.Errorf("failed to insert embedding: %w", err)
+		const insertVec = "INSERT INTO vec_documents (document_id, embedding) VALUES (?, ?)"
+		if _, err = tx.Exec(insertVec, docID, embeddingBytes); err != nil {
+			return fmt.Errorf("failed to insert embedding: %w", err)
+		}
 	}
 
 	return tx.Commit()

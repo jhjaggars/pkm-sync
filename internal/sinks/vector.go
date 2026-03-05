@@ -29,7 +29,11 @@ type VectorSink struct {
 	cfg      VectorSinkConfig
 }
 
-// NewVectorSink creates a VectorSink, opening the store and provider.
+// NewVectorSink creates a VectorSink, opening the store and (optionally) the
+// embedding provider. When no provider is configured (cfg.EmbeddingsCfg.Provider
+// is empty), the sink operates in metadata-only mode: document rows including
+// timestamps are always written, but vec_documents is not populated. This
+// allows timestamp-based incremental sync inference even without embeddings.
 // The caller is responsible for calling Close() when done.
 func NewVectorSink(cfg VectorSinkConfig) (*VectorSink, error) {
 	provider, err := embeddings.NewProvider(cfg.EmbeddingsCfg)
@@ -37,9 +41,16 @@ func NewVectorSink(cfg VectorSinkConfig) (*VectorSink, error) {
 		return nil, fmt.Errorf("failed to create embedding provider: %w", err)
 	}
 
+	// provider may be nil when no embeddings are configured (metadata-only mode).
+	if provider == nil {
+		fmt.Println("Vector store: running in metadata-only mode (no embedding provider configured)")
+	}
+
 	store, err := vectorstore.NewStore(cfg.DBPath, cfg.EmbeddingsCfg.Dimensions)
 	if err != nil {
-		provider.Close()
+		if provider != nil {
+			provider.Close()
+		}
 
 		return nil, fmt.Errorf("failed to open vector store at %s: %w", cfg.DBPath, err)
 	}
@@ -134,11 +145,6 @@ func (s *VectorSink) indexSource(
 			content = content[:s.cfg.MaxContentLen] + "\n\n[Content truncated for indexing]"
 		}
 
-		// Rate limiting between embeddings
-		if s.cfg.Delay > 0 && indexed > 0 {
-			time.Sleep(time.Duration(s.cfg.Delay) * time.Millisecond)
-		}
-
 		// Log progress every 10 groups
 		if (indexed+skipped+failed)%10 == 0 && (indexed+skipped+failed) > 0 {
 			truncated := ""
@@ -148,16 +154,6 @@ func (s *VectorSink) indexSource(
 
 			fmt.Printf("Progress: %d indexed, %d skipped, %d failed (current: %s, %d%s chars)\n",
 				indexed, skipped, failed, group.subject, originalLen, truncated)
-		}
-
-		embedding, err := s.provider.Embed(ctx, content)
-		if err != nil {
-			fmt.Printf("Warning: Failed to embed group %s (%s, %d chars): %v\n",
-				threadID, group.subject, originalLen, err)
-
-			failed++
-
-			continue
 		}
 
 		metadata := builder.buildMetadata(group)
@@ -180,13 +176,37 @@ func (s *VectorSink) indexSource(
 			UpdatedAt:    group.endTime,
 		}
 
+		// Try to generate an embedding. If no provider is configured or the
+		// call fails, we still write the document metadata so timestamp-based
+		// incremental sync inference continues to work.
+		var embedding []float32
+
+		if s.provider != nil {
+			// Rate limiting between embeddings
+			if s.cfg.Delay > 0 && indexed > 0 {
+				time.Sleep(time.Duration(s.cfg.Delay) * time.Millisecond)
+			}
+
+			var embedErr error
+
+			embedding, embedErr = s.provider.Embed(ctx, content)
+			if embedErr != nil {
+				fmt.Printf("Warning: Failed to embed group %s (%s, %d chars): %v\n",
+					threadID, group.subject, originalLen, embedErr)
+			}
+		}
+
 		if err := s.store.UpsertDocument(doc, embedding); err != nil {
 			fmt.Printf("Warning: Failed to index group %s: %v\n", threadID, err)
+
+			failed++
 
 			continue
 		}
 
-		indexed++
+		if len(embedding) > 0 {
+			indexed++
+		}
 	}
 
 	return indexed, skipped, failed, nil

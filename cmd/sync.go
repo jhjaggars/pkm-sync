@@ -7,7 +7,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"pkm-sync/internal/config"
-	"pkm-sync/internal/sinks"
+	"pkm-sync/internal/state"
 
 	"github.com/spf13/cobra"
 )
@@ -136,21 +136,36 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		active = append(active, activeGroup{grp, sources})
 	}
 
-	// Create a single shared VectorSink (when auto-indexing is enabled) so all
-	// concurrent type-group goroutines write to one SQLite connection rather than
-	// racing on the same file with separate connections.
-	var sharedVectorSink *sinks.VectorSink
+	// Create a single shared VectorSink for all concurrent type-group goroutines.
+	// The VectorSink is always active: it writes document metadata (timestamps,
+	// source name) unconditionally, enabling data-inferred incremental syncs,
+	// and additionally stores embeddings when a provider is configured.
+	sharedVectorSink, vsErr := createVectorSink(cfg)
+	if vsErr != nil {
+		return fmt.Errorf("failed to create vector sink: %w", vsErr)
+	}
 
-	if cfg.VectorDB.AutoIndex {
-		var vsErr error
+	defer sharedVectorSink.Close()
 
-		sharedVectorSink, vsErr = maybeCreateVectorSink(cfg)
-		if vsErr != nil {
-			return fmt.Errorf("failed to create vector sink: %w", vsErr)
+	// Load a single shared SyncState so all concurrent goroutines update the
+	// same in-memory object (its mutex keeps it safe). We save once after all
+	// groups finish to avoid concurrent writes to the same file.
+	var sharedSyncState *state.SyncState
+
+	stateConfigDir, stateConfigDirErr := config.GetConfigDir()
+	if stateConfigDirErr == nil {
+		if syncSince == "" {
+			// Only read persisted state when --since was not explicitly set.
+			var loadErr error
+
+			sharedSyncState, loadErr = state.Load(stateConfigDir)
+			if loadErr != nil {
+				fmt.Printf("Warning: failed to load sync state: %v; using default since window\n", loadErr)
+			}
 		}
 
-		if sharedVectorSink != nil {
-			defer sharedVectorSink.Close()
+		if sharedSyncState == nil {
+			sharedSyncState = state.New()
 		}
 	}
 
@@ -174,6 +189,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 				SourceKind:       ag.sourceKind,
 				ItemKind:         ag.itemKind,
 				SharedVectorSink: sharedVectorSink,
+				SyncState:        sharedSyncState,
 			}); err != nil {
 				fmt.Printf("Warning: %s sync failed: %v\n", ag.sourceKind, err)
 				groupErrs[i] = err
@@ -184,6 +200,13 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	eg.Wait() //nolint:errcheck // goroutines always return nil
+
+	// Save the shared sync state after all groups have finished updating it.
+	if !syncDryRun && sharedSyncState != nil && stateConfigDirErr == nil {
+		if saveErr := sharedSyncState.Save(stateConfigDir); saveErr != nil {
+			fmt.Printf("Warning: failed to save sync state: %v\n", saveErr)
+		}
+	}
 
 	var failedGroups []string
 

@@ -7,6 +7,8 @@ import (
 )
 
 // NewProvider creates a new embedding provider based on the configuration.
+// Returns nil, nil when cfg.Provider is empty — callers treat a nil provider
+// as "metadata-only mode" (document rows are still written; embeddings are not).
 func NewProvider(cfg models.EmbeddingsConfig) (Provider, error) {
 	switch cfg.Provider {
 	case "ollama":
@@ -43,6 +45,8 @@ func NewProvider(cfg models.EmbeddingsConfig) (Provider, error) {
 
 		return NewOpenAIProvider(cfg.APIURL, cfg.APIKey, cfg.Model, cfg.Dimensions), nil
 
+	case "":
+		return nil, nil // no provider configured; metadata-only mode
 	default:
 		return nil, fmt.Errorf("unsupported embedding provider: %s", cfg.Provider)
 	}

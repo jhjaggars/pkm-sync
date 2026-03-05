@@ -33,6 +33,11 @@ type SourceResult struct {
 	Name      string
 	ItemCount int
 	Err       error
+	// MaxTimestamp is the maximum UpdatedAt (or CreatedAt) timestamp observed
+	// across all fetched items. It is zero when no items were returned or on
+	// error. Callers use this to anchor the next incremental sync window to
+	// the actual data rather than to the wall-clock time of the sync run.
+	MaxTimestamp time.Time
 }
 
 // MultiSyncResult is returned by SyncAll.
@@ -116,8 +121,23 @@ func (m *MultiSyncer) SyncAll(
 			}
 
 			fmt.Printf("Fetched %d items from %s\n", len(items), entry.Name)
+
+			// Track the latest item timestamp so callers can anchor the next
+			// incremental sync window to actual data, not to wall-clock time.
+			var maxTS time.Time
+
+			for _, item := range items {
+				if ts := item.GetUpdatedAt(); ts.After(maxTS) {
+					maxTS = ts
+				}
+
+				if ts := item.GetCreatedAt(); !ts.IsZero() && ts.After(maxTS) {
+					maxTS = ts
+				}
+			}
+
 			results[i] = fetchResult{
-				sr:    SourceResult{Name: entry.Name, ItemCount: len(items)},
+				sr:    SourceResult{Name: entry.Name, ItemCount: len(items), MaxTimestamp: maxTS},
 				items: items,
 			}
 
