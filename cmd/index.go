@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/sinks"
@@ -23,6 +22,7 @@ var (
 	indexReindex       bool
 	indexDelay         int
 	indexMaxContentLen int
+	indexBatchSize     int
 )
 
 var indexCmd = &cobra.Command{
@@ -48,6 +48,7 @@ func init() {
 	indexCmd.Flags().BoolVar(&indexReindex, "reindex", false, "Re-index already indexed items")
 	indexCmd.Flags().IntVar(&indexDelay, "delay", 200, "Delay between embeddings in milliseconds (prevents Ollama overload)")
 	indexCmd.Flags().IntVar(&indexMaxContentLen, "max-content-length", 30000, "Truncate content to this many characters (0 = no limit)")
+	indexCmd.Flags().IntVar(&indexBatchSize, "batch-size", 1, "Number of documents to embed per batch (>1 uses EmbedBatch for throughput)")
 }
 
 func runIndexCommand(cmd *cobra.Command, args []string) error {
@@ -76,14 +77,9 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve vector DB path
-	dbPath := cfg.VectorDB.DBPath
-	if dbPath == "" {
-		configDir, err := config.GetConfigDir()
-		if err != nil {
-			return fmt.Errorf("failed to get config directory: %w", err)
-		}
-
-		dbPath = filepath.Join(configDir, "vectors.db")
+	dbPath, err := resolveVectorDBPath(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vector DB path: %w", err)
 	}
 
 	fmt.Printf("Using embedding provider: %s (%s, %d dimensions)\n",
@@ -96,6 +92,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 		Reindex:       indexReindex,
 		Delay:         indexDelay,
 		MaxContentLen: indexMaxContentLen,
+		BatchSize:     indexBatchSize,
 		EmbeddingsCfg: cfg.Embeddings,
 	})
 	if err != nil {

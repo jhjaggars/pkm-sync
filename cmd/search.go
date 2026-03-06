@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"os"
 	"strings"
 	"time"
 
-	"os"
-
 	"pkm-sync/internal/config"
-	"pkm-sync/internal/embeddings"
 	"pkm-sync/internal/vectorstore"
 
 	"github.com/spf13/cobra"
@@ -58,36 +55,11 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Initialize embedding provider
-	provider, err := embeddings.NewProvider(cfg.Embeddings)
+	vectorSink, err := createVectorSink(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create embedding provider: %w", err)
+		return fmt.Errorf("failed to create vector sink: %w", err)
 	}
-	defer provider.Close()
-
-	// Open vector store
-	dbPath := cfg.VectorDB.DBPath
-	if dbPath == "" {
-		// Default to config directory
-		configDir, err := config.GetConfigDir()
-		if err != nil {
-			return fmt.Errorf("failed to get config directory: %w", err)
-		}
-
-		dbPath = filepath.Join(configDir, "vectors.db")
-	}
-
-	store, err := vectorstore.NewStore(dbPath, cfg.Embeddings.Dimensions)
-	if err != nil {
-		return fmt.Errorf("failed to open vector store at %s: %w", dbPath, err)
-	}
-	defer store.Close()
-
-	// Embed the query
-	queryEmbedding, err := provider.Embed(ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to embed query: %w", err)
-	}
+	defer vectorSink.Close()
 
 	// Build search filters
 	filters := vectorstore.SearchFilters{
@@ -97,7 +69,7 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Search
-	results, err := store.Search(queryEmbedding, searchLimit, filters)
+	results, err := vectorSink.Search(ctx, query, searchLimit, filters)
 	if err != nil {
 		return fmt.Errorf("failed to search: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -134,20 +135,10 @@ func isRetriableError(err error) bool {
 
 	errStr := err.Error()
 	// Retry on EOF, connection errors, empty responses, and 500 errors
-	return containsStr(errStr, "EOF") ||
-		containsStr(errStr, "connection") ||
-		containsStr(errStr, "empty embedding") ||
-		containsStr(errStr, "status 500")
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-
-	return false
+	return strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "connection") ||
+		strings.Contains(errStr, "empty embedding") ||
+		strings.Contains(errStr, "status 500")
 }
 
 // EmbedBatch generates embeddings for multiple text inputs.

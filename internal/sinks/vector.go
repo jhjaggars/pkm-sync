@@ -3,6 +3,7 @@ package sinks
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -16,8 +17,9 @@ import (
 type VectorSinkConfig struct {
 	DBPath        string
 	Reindex       bool
-	Delay         int // milliseconds between embeddings
+	Delay         int // milliseconds between embeddings (or between batches when BatchSize > 1)
 	MaxContentLen int // 0 = no limit
+	BatchSize     int // documents per EmbedBatch call; 0 or 1 = single-embed mode
 	EmbeddingsCfg models.EmbeddingsConfig
 }
 
@@ -43,7 +45,7 @@ func NewVectorSink(cfg VectorSinkConfig) (*VectorSink, error) {
 
 	// provider may be nil when no embeddings are configured (metadata-only mode).
 	if provider == nil {
-		fmt.Println("Vector store: running in metadata-only mode (no embedding provider configured)")
+		slog.Info("Vector store: running in metadata-only mode (no embedding provider configured)")
 	}
 
 	store, err := vectorstore.NewStore(cfg.DBPath, cfg.EmbeddingsCfg.Dimensions)
@@ -79,24 +81,38 @@ func (s *VectorSink) Write(ctx context.Context, items []models.FullItem) error {
 	bySource := groupBySource(items)
 
 	totalIndexed := 0
+	totalMetadataOnly := 0
 	totalSkipped := 0
 	totalFailed := 0
 
 	for sourceName, sourceItems := range bySource {
-		indexed, skipped, failed, err := s.indexSource(ctx, sourceName, sourceItems)
+		indexed, metadataOnly, skipped, failed, err := s.indexSource(ctx, sourceName, sourceItems)
 		if err != nil {
 			return fmt.Errorf("failed to index source %s: %w", sourceName, err)
 		}
 
 		totalIndexed += indexed
+		totalMetadataOnly += metadataOnly
 		totalSkipped += skipped
 		totalFailed += failed
 	}
 
-	fmt.Printf("Vector indexing complete: %d indexed, %d skipped, %d failed\n",
-		totalIndexed, totalSkipped, totalFailed)
+	slog.Info("Vector indexing complete",
+		"indexed", totalIndexed,
+		"metadata_only", totalMetadataOnly,
+		"skipped", totalSkipped,
+		"failed", totalFailed)
 
 	return nil
+}
+
+// pendingDoc holds a prepared document awaiting embedding and upsert.
+type pendingDoc struct {
+	threadID    string
+	group       *itemGroup
+	originalLen int
+	content     string
+	doc         vectorstore.Document
 }
 
 // indexSource indexes all items for a single source.
@@ -104,7 +120,7 @@ func (s *VectorSink) indexSource(
 	ctx context.Context,
 	sourceName string,
 	items []models.FullItem,
-) (indexed, skipped, failed int, err error) {
+) (indexed, metadataOnly, skipped, failed int, err error) {
 	// Determine source type and pick the appropriate content builder
 	var srcType string
 	if len(items) > 0 {
@@ -115,7 +131,7 @@ func (s *VectorSink) indexSource(
 
 	// Group messages by thread/document
 	groups := groupMessagesByThread(items, sourceName, builder)
-	fmt.Printf("Source %s: grouped %d items into %d groups\n", sourceName, len(items), len(groups))
+	slog.Info("Source grouped", "source", sourceName, "items", len(items), "groups", len(groups))
 
 	// Get already-indexed threads unless reindex is requested
 	var indexedThreads map[string]bool
@@ -123,13 +139,16 @@ func (s *VectorSink) indexSource(
 	if !s.cfg.Reindex {
 		indexedThreads, err = s.store.GetIndexedThreadIDs(sourceName)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("failed to get indexed threads: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("failed to get indexed threads: %w", err)
 		}
 
-		fmt.Printf("Source %s: already indexed: %d groups\n", sourceName, len(indexedThreads))
+		slog.Info("Source already indexed", "source", sourceName, "count", len(indexedThreads))
 	} else {
 		indexedThreads = make(map[string]bool)
 	}
+
+	// Build list of documents to process, skipping already-indexed ones.
+	var pending []pendingDoc
 
 	for threadID, group := range groups {
 		if indexedThreads[threadID] && !s.cfg.Reindex {
@@ -143,17 +162,6 @@ func (s *VectorSink) indexSource(
 		originalLen := len(content)
 		if s.cfg.MaxContentLen > 0 && len(content) > s.cfg.MaxContentLen {
 			content = content[:s.cfg.MaxContentLen] + "\n\n[Content truncated for indexing]"
-		}
-
-		// Log progress every 10 groups
-		if (indexed+skipped+failed)%10 == 0 && (indexed+skipped+failed) > 0 {
-			truncated := ""
-			if len(content) < originalLen {
-				truncated = fmt.Sprintf(" -> %d", len(content))
-			}
-
-			fmt.Printf("Progress: %d indexed, %d skipped, %d failed (current: %s, %d%s chars)\n",
-				indexed, skipped, failed, group.subject, originalLen, truncated)
 		}
 
 		metadata := builder.buildMetadata(group)
@@ -176,40 +184,122 @@ func (s *VectorSink) indexSource(
 			UpdatedAt:    group.endTime,
 		}
 
-		// Try to generate an embedding. If no provider is configured or the
-		// call fails, we still write the document metadata so timestamp-based
-		// incremental sync inference continues to work.
-		var embedding []float32
+		pending = append(pending, pendingDoc{
+			threadID:    threadID,
+			group:       group,
+			originalLen: originalLen,
+			content:     content,
+			doc:         doc,
+		})
+	}
+
+	batchSize := s.cfg.BatchSize
+	if batchSize <= 1 || s.provider == nil {
+		batchSize = 1
+	}
+
+	for i := 0; i < len(pending); i += batchSize {
+		end := i + batchSize
+		if end > len(pending) {
+			end = len(pending)
+		}
+
+		batch := pending[i:end]
+
+		// Apply rate limiting between batches (not before the first batch).
+		if s.provider != nil && s.cfg.Delay > 0 && i > 0 {
+			time.Sleep(time.Duration(s.cfg.Delay) * time.Millisecond)
+		}
+
+		// Log progress every 10 documents processed.
+		if i > 0 && i%10 == 0 {
+			slog.Info("Indexing progress",
+				"indexed", indexed,
+				"metadata_only", metadataOnly,
+				"skipped", skipped,
+				"failed", failed)
+		}
+
+		// Generate embeddings for the batch.
+		var batchEmbeddings [][]float32
 
 		if s.provider != nil {
-			// Rate limiting between embeddings
-			if s.cfg.Delay > 0 && indexed > 0 {
-				time.Sleep(time.Duration(s.cfg.Delay) * time.Millisecond)
-			}
+			if len(batch) == 1 {
+				// Single-embed path.
+				embedding, embedErr := s.provider.Embed(ctx, batch[0].content)
+				if embedErr != nil {
+					slog.Warn("Failed to embed document",
+						"thread_id", batch[0].threadID,
+						"subject", batch[0].group.subject,
+						"chars", batch[0].originalLen,
+						"error", embedErr)
 
-			var embedErr error
+					batchEmbeddings = [][]float32{nil}
+				} else {
+					batchEmbeddings = [][]float32{embedding}
+				}
+			} else {
+				// Batch-embed path (one HTTP call for all texts in the batch).
+				texts := make([]string, len(batch))
+				for j, p := range batch {
+					texts[j] = p.content
+				}
 
-			embedding, embedErr = s.provider.Embed(ctx, content)
-			if embedErr != nil {
-				fmt.Printf("Warning: Failed to embed group %s (%s, %d chars): %v\n",
-					threadID, group.subject, originalLen, embedErr)
+				embeddings, embedErr := s.provider.EmbedBatch(ctx, texts)
+				if embedErr != nil {
+					slog.Warn("Failed to batch embed",
+						"batch_start", i,
+						"batch_size", len(batch),
+						"error", embedErr)
+
+					batchEmbeddings = make([][]float32, len(batch)) // all nil — fall back to metadata-only
+				} else {
+					batchEmbeddings = embeddings
+				}
 			}
+		} else {
+			batchEmbeddings = make([][]float32, len(batch)) // metadata-only: no embeddings
 		}
 
-		if err := s.store.UpsertDocument(doc, embedding); err != nil {
-			fmt.Printf("Warning: Failed to index group %s: %v\n", threadID, err)
+		// Upsert each document in the batch.
+		for j, p := range batch {
+			var embedding []float32
+			if j < len(batchEmbeddings) {
+				embedding = batchEmbeddings[j]
+			}
 
-			failed++
+			if upsertErr := s.store.UpsertDocument(p.doc, embedding); upsertErr != nil {
+				slog.Warn("Failed to index document", "thread_id", p.threadID, "error", upsertErr)
 
-			continue
-		}
+				failed++
 
-		if len(embedding) > 0 {
-			indexed++
+				continue
+			}
+
+			if len(embedding) > 0 {
+				indexed++
+			} else {
+				metadataOnly++
+			}
 		}
 	}
 
-	return indexed, skipped, failed, nil
+	return indexed, metadataOnly, skipped, failed, nil
+}
+
+// Search performs a semantic search query against the vector store.
+// It requires an embedding provider; returns an error in metadata-only mode.
+func (s *VectorSink) Search(ctx context.Context, query string, limit int, filters vectorstore.SearchFilters) ([]vectorstore.SearchResult, error) {
+	if s.provider == nil {
+		return nil, fmt.Errorf("search requires an embedding provider; none configured (metadata-only mode)")
+	}
+
+	queryEmbedding, err := s.provider.Embed(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query: %w", err)
+	}
+
+	return s.store.Search(queryEmbedding, limit, filters)
 }
 
 // Stats returns statistics about the vector store.
@@ -221,8 +311,10 @@ func (s *VectorSink) Stats() (*vectorstore.StoreStats, error) {
 func (s *VectorSink) Close() error {
 	var errs []string
 
-	if err := s.provider.Close(); err != nil {
-		errs = append(errs, fmt.Sprintf("provider: %v", err))
+	if s.provider != nil {
+		if err := s.provider.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("provider: %v", err))
+		}
 	}
 
 	if err := s.store.Close(); err != nil {
