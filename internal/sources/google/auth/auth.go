@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"pkm-sync/internal/config"
+	"pkm-sync/internal/keystore"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -17,6 +18,22 @@ import (
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/gmail/v1"
 )
+
+const googleTokenKey = "google-oauth-token"
+
+// secretStore is the active secret store; nil means use legacy file behavior.
+var secretStore keystore.Store
+
+// SetStore configures the secret store used for Google OAuth tokens.
+// Call this once in PersistentPreRun before any auth operations.
+func SetStore(s keystore.Store) {
+	secretStore = s
+}
+
+// GetStore returns the active secret store, or nil if not initialized.
+func GetStore() keystore.Store {
+	return secretStore
+}
 
 func GetClient() (*http.Client, error) {
 	config, err := getOAuthConfig()
@@ -160,6 +177,21 @@ func extractAuthCode(input string) string {
 }
 
 func tokenFromFile() (*oauth2.Token, error) {
+	if secretStore != nil {
+		data, err := secretStore.Get(googleTokenKey)
+		if err != nil {
+			return nil, err // includes ErrNotFound
+		}
+
+		token := &oauth2.Token{}
+		if err := json.Unmarshal([]byte(data), token); err != nil {
+			return nil, fmt.Errorf("failed to parse stored token: %w", err)
+		}
+
+		return token, nil
+	}
+
+	// Legacy file-based path
 	tokenPath, err := config.GetTokenPath()
 	if err != nil {
 		return nil, err
@@ -183,6 +215,22 @@ func tokenFromFile() (*oauth2.Token, error) {
 }
 
 func saveToken(token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return fmt.Errorf("unable to marshal token: %w", err)
+	}
+
+	if secretStore != nil {
+		if err := secretStore.Set(googleTokenKey, string(data)); err != nil {
+			return fmt.Errorf("unable to save token to secret store: %w", err)
+		}
+
+		fmt.Printf("Saving credential to %s backend\n", secretStore.Backend())
+
+		return nil
+	}
+
+	// Legacy file-based path
 	tokenPath, err := config.GetTokenPath()
 	if err != nil {
 		return fmt.Errorf("unable to get token path: %w", err)
@@ -201,8 +249,8 @@ func saveToken(token *oauth2.Token) error {
 		}
 	}()
 
-	if err := json.NewEncoder(f).Encode(token); err != nil {
-		return fmt.Errorf("unable to encode token to file: %w", err)
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("unable to write token to file: %w", err)
 	}
 
 	return nil

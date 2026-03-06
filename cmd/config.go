@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"pkm-sync/internal/config"
+	"pkm-sync/internal/keystore"
+	"pkm-sync/internal/sources/google/auth"
 	"pkm-sync/pkg/models"
 
 	"github.com/spf13/cobra"
@@ -61,6 +63,20 @@ var configEditCmd = &cobra.Command{
 	RunE:  runConfigEditCommand,
 }
 
+var configMigrateSecretsCmd = &cobra.Command{
+	Use:   "migrate-secrets",
+	Short: "Migrate stored secrets from files to the OS keychain",
+	Long:  "Reads Google OAuth tokens and other pkm-sync secrets from their legacy file locations and writes them to the OS keychain (macOS Keychain, GNOME Keyring, or Windows Credential Manager).",
+	RunE:  runConfigMigrateSecretsCommand,
+}
+
+var configClearTokenCmd = &cobra.Command{
+	Use:   "clear-token",
+	Short: "Clear the stored Google OAuth token",
+	Long:  "Removes the Google OAuth token from the active secret backend (keychain or file). You will be prompted to re-authorize on the next sync.",
+	RunE:  runConfigClearTokenCommand,
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 
@@ -69,6 +85,8 @@ func init() {
 	configCmd.AddCommand(configPathCmd)
 	configCmd.AddCommand(configValidateCmd)
 	configCmd.AddCommand(configEditCmd)
+	configCmd.AddCommand(configMigrateSecretsCmd)
+	configCmd.AddCommand(configClearTokenCmd)
 
 	// Flags for config init
 	configInitCmd.Flags().BoolP("force", "f", false, "Overwrite existing config file")
@@ -307,6 +325,61 @@ func validateOutputDirectory(dir string) error {
 	if err := os.Remove(tempFile); err != nil {
 		return fmt.Errorf("failed to clean up test file: %w", err)
 	}
+
+	return nil
+}
+
+func runConfigMigrateSecretsCommand(cmd *cobra.Command, args []string) error {
+	dir := configDir
+
+	if dir == "" {
+		var err error
+
+		dir, err = config.GetConfigDir()
+		if err != nil {
+			return fmt.Errorf("failed to determine config directory: %w", err)
+		}
+	}
+
+	fmt.Println("Migrating secrets from files to OS keychain...")
+
+	if err := keystore.MigrateAll(dir, nil); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	fmt.Println("Done. Secrets are now stored in the OS keychain.")
+
+	return nil
+}
+
+func runConfigClearTokenCommand(cmd *cobra.Command, args []string) error {
+	// Use the store wired up by PersistentPreRun (via auth.SetStore) if available,
+	// otherwise fall back to the file-based token path.
+	store := auth.GetStore()
+
+	if store != nil {
+		if err := store.Delete("google-oauth-token"); err != nil {
+			return fmt.Errorf("failed to clear token: %w", err)
+		}
+
+		fmt.Printf("Google OAuth token cleared from %s backend.\n", store.Backend())
+		fmt.Println("You will be prompted to re-authorize on next use.")
+
+		return nil
+	}
+
+	// Legacy fallback: delete file directly.
+	tokenPath, err := config.GetTokenPath()
+	if err != nil {
+		return fmt.Errorf("failed to determine token path: %w", err)
+	}
+
+	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete token file: %w", err)
+	}
+
+	fmt.Printf("Google OAuth token file removed: %s\n", tokenPath)
+	fmt.Println("You will be prompted to re-authorize on next use.")
 
 	return nil
 }

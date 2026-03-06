@@ -6,7 +6,22 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"pkm-sync/internal/keystore"
 )
+
+// secretStore is the active secret store; nil means use legacy file behavior.
+var secretStore keystore.Store
+
+// SetStore configures the secret store used for Slack tokens.
+// Call this once in PersistentPreRun before any token operations.
+func SetStore(s keystore.Store) {
+	secretStore = s
+}
+
+func slackKeyForWorkspace(workspace string) string {
+	return "slack-token-" + workspace
+}
 
 // TokenData holds the extracted Slack session token and cookies.
 type TokenData struct {
@@ -33,8 +48,26 @@ func tokenFilePath(configDir, workspace string) string {
 	return filepath.Join(configDir, fmt.Sprintf("slack-token-%s.json", workspace))
 }
 
-// LoadToken loads token data from disk.
+// LoadToken loads token data from the configured store (or file fallback).
 func LoadToken(configDir, workspace string) (*TokenData, error) {
+	if secretStore != nil {
+		raw, err := secretStore.Get(slackKeyForWorkspace(workspace))
+		if err != nil {
+			if err == keystore.ErrNotFound {
+				return nil, nil
+			}
+
+			return nil, fmt.Errorf("failed to read token from store: %w", err)
+		}
+
+		var td TokenData
+		if err := json.Unmarshal([]byte(raw), &td); err != nil {
+			return nil, fmt.Errorf("failed to parse stored token: %w", err)
+		}
+
+		return &td, nil
+	}
+
 	path := tokenFilePath(configDir, workspace)
 
 	data, err := os.ReadFile(path)
@@ -54,15 +87,23 @@ func LoadToken(configDir, workspace string) (*TokenData, error) {
 	return &td, nil
 }
 
-// SaveToken writes token data to disk.
+// SaveToken writes token data to the configured store (or file fallback).
 func SaveToken(configDir string, td *TokenData) error {
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return fmt.Errorf("failed to create config dir: %w", err)
-	}
-
 	data, err := json.MarshalIndent(td, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal token: %w", err)
+	}
+
+	if secretStore != nil {
+		if err := secretStore.Set(slackKeyForWorkspace(td.Workspace), string(data)); err != nil {
+			return fmt.Errorf("failed to save token to store: %w", err)
+		}
+
+		return nil
+	}
+
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return fmt.Errorf("failed to create config dir: %w", err)
 	}
 
 	path := tokenFilePath(configDir, td.Workspace)
@@ -74,8 +115,12 @@ func SaveToken(configDir string, td *TokenData) error {
 	return nil
 }
 
-// DeleteToken removes a token file from disk.
+// DeleteToken removes a token from the configured store (or file fallback).
 func DeleteToken(configDir, workspace string) error {
+	if secretStore != nil {
+		return secretStore.Delete(slackKeyForWorkspace(workspace))
+	}
+
 	path := tokenFilePath(configDir, workspace)
 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

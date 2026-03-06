@@ -126,10 +126,11 @@ func runSetupCommand(cmd *cobra.Command, args []string) error {
 			fmt.Println("- Current token has insufficient permissions for document export")
 			fmt.Println()
 			fmt.Println("To fix this:")
-			fmt.Println("1. Delete your token file to force re-authorization:")
+			fmt.Println("1. Clear your stored token to force re-authorization:")
+			fmt.Println("   pkm-sync config clear-token")
 
 			tokenPath, _ := config.GetTokenPath()
-			fmt.Printf("   rm %s\n", tokenPath)
+			fmt.Printf("   (or: rm %s)\n", tokenPath)
 			fmt.Println("2. Run this setup command again to re-authorize with full permissions")
 
 			return fmt.Errorf("drive export permissions insufficient: %w", err)
@@ -160,10 +161,11 @@ func runSetupCommand(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("To fix this:")
 		fmt.Println("1. Enable Gmail API in your Google Cloud Console")
-		fmt.Println("2. Delete your token file to force re-authorization:")
+		fmt.Println("2. Clear your stored token to force re-authorization:")
+		fmt.Println("   pkm-sync config clear-token")
 
 		tokenPath, _ := config.GetTokenPath()
-		fmt.Printf("   rm %s\n", tokenPath)
+		fmt.Printf("   (or: rm %s)\n", tokenPath)
 		fmt.Println("3. Run this setup command again to re-authorize with Gmail scope")
 
 		return fmt.Errorf("gmail service creation failed: %w", err)
@@ -181,10 +183,11 @@ func runSetupCommand(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("To fix this:")
 		fmt.Println("1. Enable Gmail API in your Google Cloud Console")
-		fmt.Println("2. Delete your token file to force re-authorization:")
+		fmt.Println("2. Clear your stored token to force re-authorization:")
+		fmt.Println("   pkm-sync config clear-token")
 
-		tokenPath, _ := config.GetTokenPath()
-		fmt.Printf("   rm %s\n", tokenPath)
+		tokenPath2, _ := config.GetTokenPath()
+		fmt.Printf("   (or: rm %s)\n", tokenPath2)
 		fmt.Println("3. Run this setup command again to re-authorize with Gmail scope")
 
 		return fmt.Errorf("gmail API access failed: %w", err)

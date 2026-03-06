@@ -207,6 +207,12 @@ type AuthConfig struct {
 	// Security settings
 	EncryptTokens   bool   `json:"encrypt_tokens"   yaml:"encrypt_tokens"`
 	TokenExpiration string `json:"token_expiration" yaml:"token_expiration"` // "30d"
+
+	// SecretStorage controls how OAuth tokens are stored.
+	// "auto" (default) tries the OS keychain and falls back to files.
+	// "keyring" requires keychain; errors if unavailable.
+	// "file" uses legacy file-based storage only.
+	SecretStorage string `json:"secret_storage" yaml:"secret_storage"`
 }
 
 type AppConfig struct {
