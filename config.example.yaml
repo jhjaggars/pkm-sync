@@ -43,11 +43,34 @@ sources:
         - starred
       include_threads: true
       include_dms: false
+      include_group_dms: false
       thread_mode: consolidated   # individual | consolidated | summary
       exclude_bots: true
       min_length: 10
       rate_limit_ms: 500
       max_messages_per_channel: 500
+
+  jira_work:
+    enabled: false
+    type: jira
+    priority: 3
+    output_subdir: Jira
+    since: 7d
+    jira:
+      instance_url: https://issues.example.com
+      project_keys:
+        - PROJ
+        - TEAM
+      issue_types:
+        - Bug
+        - Story
+      statuses:
+        - "In Progress"
+        - "To Do"
+      assignee_filter: me           # "me" filters to current user
+      include_comments: true
+      # Alternative: use raw JQL instead of structured fields above
+      # jql: "project = PROJ AND assignee = currentUser()"
 
 targets:
   obsidian:

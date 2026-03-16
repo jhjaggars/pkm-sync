@@ -7,325 +7,163 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Requirements**: Go 1.24.4 or later
 
 ```bash
-# Build the application
+# Build
 go build -v ./...              # Build all packages (mirrors CI)
 go build -o pkm-sync ./cmd     # Build named binary
 
-# Run the application (requires OAuth setup first)
-./pkm-sync setup             # Verify authentication configuration
-./pkm-sync gmail             # Sync Gmail emails to PKM systems
-./pkm-sync calendar          # List and sync Google Calendar events
-./pkm-sync drive             # Sync Google Drive documents to PKM systems
+# Test
+make test                      # Preferred — runs all tests
+go test ./...                  # All tests
+go test -race ./...            # With race detection
+go test -bench=. ./...         # Run benchmarks
 
-# Configuration management
-./pkm-sync config init       # Create default configuration
-./pkm-sync config show       # Display current configuration
-./pkm-sync config validate   # Validate configuration
+# Lint (requires golangci-lint v2.0+)
+make check-golangci-version    # Verify installation
+golangci-lint run              # Run linter
 
-# Gmail-specific examples
-./pkm-sync gmail --source gmail_work --output ./work-emails
-./pkm-sync gmail --since 7d   # Sync last 7 days from all enabled Gmail sources
-./pkm-sync gmail --dry-run    # Preview what would be synced
-
-# Custom paths
-./pkm-sync --credentials /path/to/credentials.json setup
-./pkm-sync --config-dir /custom/config/dir setup
+# Full CI check (lint + test + build) — runs in pre-commit hook
+make ci
 
 # Development setup
-./scripts/install-hooks.sh   # Install Git hooks (pre-commit formatting)
-make check-golangci-version  # Verify golangci-lint v2.0+ installation
+./scripts/install-hooks.sh     # Install Git hooks (REQUIRED for contributors)
 ```
+
+The pre-commit hook runs `go fmt` and `make ci` before each commit. Commits are blocked if quality checks fail.
 
 ## Architecture Overview
 
-This is a Go CLI application that provides universal Personal Knowledge Management (PKM) synchronization. It connects multiple data sources (Google Calendar, Gmail, Drive) to PKM sinks (Obsidian, Logseq) using OAuth 2.0 authentication.
+This is a Go CLI application for Personal Knowledge Management (PKM) synchronization. It connects multiple data sources to PKM sinks using a **Sources -> Transformers -> Sinks** pipeline.
 
 ### CLI Framework
 - Uses **Cobra** for command structure with persistent flags
 - Root command (`cmd/root.go`) handles global flags: `--credentials`, `--config-dir`, `--debug`, `--start`, `--end`
-- Main commands: `gmail`, `calendar`, `drive`, `config`, `setup`
 - Global flags are processed in `PersistentPreRun` to configure paths
 
-### Multi-Source Architecture (Sources → Transformers → Sinks)
-- **Universal interfaces** (`pkg/interfaces/`) for Source, Sink, and Transformer abstractions
-- **Universal data model** (`pkg/models/item.go`) with segregated interface hierarchy:
-  - **CoreItem**: Base interface with ID, title, source type
-  - **SourcedItem**: Extends CoreItem with source URL and metadata
-  - **FullItem**: Composed interface (SourcedItem + TimestampedItem + EnrichedItem + SerializableItem)
-  - **BasicItem**: Standard implementation for emails, calendar events, documents
-  - **Thread**: Specialized implementation for email threads with embedded messages
-- **Source implementations** in `internal/sources/` (Google Calendar, Gmail, Drive)
-- **Sink implementations** in `internal/sinks/` — `FileSink` owns formatting logic for Obsidian and Logseq via unexported `formatter` interface; `VectorSink` for semantic search indexing
-- **Transformer pipeline** (`internal/transform/`) for configurable item processing
-- **Sync engine** (`internal/sync/`) — `MultiSyncer.SyncAll()` runs Sources → Transform → Sinks pipeline
+### Universal Data Model (`pkg/models/item.go`)
+Segregated interface hierarchy:
+- **CoreItem**: Base interface with ID, title, source type
+- **SourcedItem**: Extends CoreItem with source URL and metadata
+- **FullItem**: Composed interface (SourcedItem + TimestampedItem + EnrichedItem + SerializableItem)
+- **BasicItem**: Standard implementation for emails, calendar events, documents, Jira issues, Slack messages
+- **Thread**: Specialized implementation for email threads with embedded messages
+
+### Sink Routing by Source Type
+
+Different source types route to different sinks. This is a key architectural decision implemented in `cmd/helpers.go:runSourceSync()`:
+
+- **Jira, Calendar, Drive**: `FileSink` (Obsidian/Logseq markdown files) + `VectorSink`
+- **Slack**: `SlackArchiveSink` (SQLite `slack.db`) + `VectorSink` — **no file export**
+- **Gmail**: `ArchiveSink` (EML files + SQLite `archive.db`) + `VectorSink` — **no file export**
+
+All source types write to `VectorSink` for semantic search indexing and incremental sync time inference (via `MAX(updated_at)` per source in `vectors.db`).
+
+### Source Implementations
+
+#### Google Sources (`internal/sources/google/`)
+- Single `GoogleSource` type handles Calendar, Gmail, and Drive via `GoogleSourceWithConfig`
+- Uses Google OAuth 2.0 with automatic web server flow (fallback to manual copy/paste)
+- Token and credentials stored in platform-specific config directories
+- Gmail requires `gmail.readonly` scope (automatically requested)
+
+#### Jira Source (`internal/sources/jira/`)
+
+- **Authentication chain** (`config.go`): Reads `~/.config/.jira/.config.yml` (jira-cli config file) for server URL, login, auth type, and API token. Falls back to `JIRA_API_TOKEN` then `JIRA_TOKEN` env vars. Per-source `instance_url` in pkm-sync config overrides the server from jira-cli. Supports both bearer (default) and basic auth.
+- **API client**: Uses `github.com/ankitpokhrel/jira-cli/pkg/jira` for its HTTP client and data types — not as a CLI wrapper. Search uses `GetV2()` to call `/search?fields=*all` directly, retrieving all issue fields in one call.
+- **JQL building** (`jql.go`): Two modes. When `jql` config field is set, it's used as-is (wrapped in parens). Otherwise, structured fields (`project_keys`, `issue_types`, `statuses`, `assignee_filter`) are composed into JQL clauses. A `since` time filter is always appended as `updated >= "..."`. Results are ordered by `updated DESC`.
+- **Pagination** (`source.go`): Fetches in pages of 50 via `searchWithAllFields()`, stopping when the limit is reached or results are exhausted.
+- **Converter** (`converter.go`): Issue key (e.g. `PROJ-123`) becomes the item title and output filename (`PROJ-123.md`). The human-readable summary is stored in `metadata["summary"]`. Tags are generated from labels, issue type, status, and priority (lowercased, spaces to hyphens). Comments are appended as `## Comments` sections when `include_comments` is true.
+- **Discovery** (`discovery.go`): `ListProjects()`, `ListIssueTypes(projectKey)`, `ListStatuses(projectKey)` power the `configure` command's interactive TUI for Jira sources.
+
+#### Slack Source (`internal/sources/slack/`)
+
+- **Authentication** (`auth.go`, `token.go`): Uses Slack's **internal web API** (not the official OAuth Slack API). Session tokens (`xoxc-*`) are extracted from a real browser login via a bundled Playwright script (`playwright/auth.js`). **Runtime dependency on Node.js** — Playwright and Chromium are auto-installed on first run. Token + cookies saved via keystore (OS keychain, `internal/keystore/`) with file fallback (`slack-token-<workspace>.json`). Browser profile persisted at `<configDir>/slack-browser-profile/`.
+- **API client** (`client.go`): All calls go through `CallAPI()` using multipart form POST to `<apiBaseURL>/api/<method>`. Automatic retry with exponential backoff (doubling up to 30s cap) on `ratelimited` errors. The `client.userBoot` response is cached for the entire sync cycle — it provides channels, groups, IMs, starred items, and sidebar sections in one call.
+- **Channel resolution** (`source.go`): Channels are resolved from three additive sources, then deduplicated by ID before fetching:
+  1. Static `channels` list — resolved by name via `FindChannel()`
+  2. Dynamic `channel_groups` — `"starred"` reads the boot response's `starred` array; other names match sidebar sections via `GetChannelSections()` (tries boot data first, falls back to `users.channelSections.list` API)
+  3. DMs (`include_dms`) and MPDMs (`include_group_dms`) from the boot response
+- **Message fetching**: `conversations.history` with pagination (200 per page). System subtypes (join/leave/topic/purpose/archive/name) are filtered out. Bot messages excluded when `exclude_bots` is true. Thread replies fetched via `conversations.replies` for thread root messages when `include_threads` is set. Rate limiting sleep between channels and thread fetches.
+- **User cache** (`user_cache.go`): User IDs resolved to display names via `users.info` and cached in `slack-user-cache.json`. Cache persists across syncs to avoid redundant API calls.
+- **Converter** (`converter.go`): Each message becomes a `BasicItem`. Text is extracted from `rich_text` blocks (falling back to plain `text` field). Metadata includes `channel`, `channel_id`, `workspace`, `author`, `ts`, `thread_ts`, `is_thread_root`, `reply_count`. Deep links: `<workspace>/archives/<channelID>/p<ts>`.
+
+### Sink Implementations (`internal/sinks/`)
+
+- **FileSink**: Owns formatting logic for Obsidian and Logseq via unexported `formatter` interface
+- **VectorSink**: Semantic search indexing into SQLite with optional embeddings
+- **ArchiveSink**: Gmail EML files + SQLite FTS4 index (`archive.db`)
+- **SlackArchiveSink**: SQLite database (`slack.db`) for Slack messages
+
+#### Slack Archive Schema (`slack.db`)
+```sql
+-- Table: slack_messages
+-- id (TEXT UNIQUE): "slack_<channelID>_<ts>"
+-- channel_id, channel_name, workspace, author (TEXT)
+-- content (TEXT): message body
+-- message_url (TEXT): deep link
+-- item_type (TEXT): "slack_message" or "slack_reply"
+-- thread_ts (TEXT), is_thread_root (INTEGER), reply_count (INTEGER)
+-- created_at, synced_at (TEXT, RFC3339)
+-- Indexes: channel_id, thread_ts (partial where != ''), created_at, author
+-- Upsert on conflict(id): updates content, author, channel_name, synced_at
+```
 
 ### Configuration System (`internal/config/config.go`)
-- **Multi-source configuration** supporting enabled sources array
-- **YAML-based configuration** with comprehensive options
-- **Configuration search paths**:
-  1. Custom directory (via `--config-dir` flag)
-  2. Global config: `~/.config/pkm-sync/config.yaml`
-  3. Local repository: `./config.yaml` (current directory)
-- **Complete documentation** in `CONFIGURATION.md`
+- **YAML-based** with multi-source support via `enabled_sources` array
+- **Configuration search paths**: custom `--config-dir` flag -> `~/.config/pkm-sync/config.yaml` -> `./config.yaml`
+- **Complete reference** in `CONFIGURATION.md`
+- **Per-source overrides**: `since`, `output_subdir`, `output_target`, `sync_interval`, `priority`
+- **Config models** in `pkg/models/config.go` — all source-specific config structs live here
 
-### Authentication Flow
-- **OAuth 2.0 only** (no ADC support) with Google Calendar, Drive, and Gmail APIs
-- **Primary method**: Automatic web server flow (opens browser, captures callback on localhost)
-- **Fallback method**: Manual copy/paste flow (supports pasting full callback URL or auth code)
-- Automatic extraction of auth code from URLs with `extractAuthCode()` function
-- Token and credentials stored in platform-specific config directories
-- **Gmail requires additional scope**: `gmail.readonly` for email access
+### Transformer Pipeline (`internal/transform/`)
+- **Interface**: `Transform([]models.FullItem) ([]models.FullItem, error)`
+- **Segregated interfaces**: `ContentTransformer` for content modification, `MetadataTransformer` for metadata enrichment
+- **TransformPipeline**: Chains transformers with configurable error handling (`fail_fast`, `log_and_continue`, `skip_item`)
+- **Built-in transformers**: `content_cleanup`, `auto_tagging`, `filter`, `link_extraction`, `signature_removal`, `thread_grouping`
+- Sync engine automatically applies all content processing transformers between fetch and export
 
-### Data Flow
-1. **Multi-source collection**: Sync engine iterates through enabled sources
-2. **Universal data model**: Each source converts data to common `FullItem` format
-3. **Transform pipeline**: Optional processing chain for item modification, filtering, and enhancement
-4. **Source tagging**: Optional tags added to identify data source
-5. **Target export**: Items formatted and exported according to target type
-6. **Single output directory**: All targets use `sync.default_output_dir`
+### Sync Engine (`internal/sync/`)
+- `MultiSyncer.SyncAll()` runs Sources -> Transform -> Sinks pipeline
+- Per-source `since` time override and limit support
+- Incremental sync: infers last-synced time from `vectors.db` via `MAX(updated_at)` per source
+- Sub-item change detection (`cmd/helpers.go:getSourceSubItems()`): new project keys, channels, or labels trigger a full lookback window instead of incremental sync
+- State tracking in `internal/state/` persists sub-item membership across syncs
+
+### Interactive Configuration (`internal/configure/`)
+- `configure` command uses source-type-specific `DiscoveryProvider` implementations
+- Each provider implements: `Authenticate()`, `DiscoverySections()`, `ApplySelections()`, `Preview()`, `RequiredFields()`
+- **Slack provider**: Discovers channels (with message previews), channel groups (starred + sidebar sections), messaging toggles (DMs, group DMs). Required field: `workspace_url`.
+- **Jira provider**: Discovers accessible projects, issue types (from a reference project), statuses (deduplicated across issue types). Required field: `instance_url`.
+- **Gmail/Drive/Calendar providers**: Discover labels, folders/shared drives, and calendars respectively.
+- Multi-select TUI powered by `github.com/charmbracelet/huh`. Requires interactive TTY.
 
 ### Key Dependencies
 - `github.com/spf13/cobra` - CLI framework
-- `google.golang.org/api/calendar/v3` - Google Calendar API
-- `google.golang.org/api/drive/v3` - Google Drive API
-- `google.golang.org/api/gmail/v1` - Gmail API
+- `google.golang.org/api/calendar/v3`, `drive/v3`, `gmail/v1` - Google APIs
 - `golang.org/x/oauth2/google` - OAuth 2.0 client
 - `gopkg.in/yaml.v3` - YAML configuration parsing
 - `github.com/JohannesKaufmann/html-to-markdown/v2` - HTML to Markdown conversion
 - `github.com/tj/go-naturaldate` - Natural language date parsing
-- `github.com/ankitpokhrel/jira-cli/pkg/jira` - Jira REST API client (V2)
+- `github.com/ankitpokhrel/jira-cli/pkg/jira` - Jira V2 REST client (HTTP client and data types; search endpoint called directly via `GetV2()`)
+- `github.com/mattn/go-sqlite3` - SQLite driver (Slack archive, email archive, vector store)
 - `github.com/charmbracelet/huh` - Terminal form/TUI library (used by `configure` command)
+- **Runtime**: Node.js required for Slack auth (Playwright + Chromium auto-installed on first use)
 
 ### Development Tools
 - **golangci-lint v2.0+** - Required for v2 configuration format
   - The `.golangci.yml` uses v2-specific features like `formatters` section
   - Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
-  - Alternative: `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0`
   - Verify: `make check-golangci-version`
-
-## Current Implementation Status
-
-### Sources
-- ✅ **Gmail** - Fully implemented with multi-instance support, advanced filtering, thread grouping, and performance optimizations
-- ✅ **Google Calendar** - Fully implemented in `internal/sources/google/`
-- ✅ **Google Drive** - Fully implemented as a first-class source (`google_drive` type) syncing Docs/Sheets/Slides from folders and shared drives
-- ✅ **Jira** - Implemented in `internal/sources/jira/` with bearer token auth, JQL query building, comments, and pagination (targets on-premise Jira like issues.redhat.com via V2 API)
-- ✅ **Slack** - Implemented in `internal/sources/slack/` with bearer token auth, SQLite archive sink, static `channels` list, dynamic `channel_groups` (`"starred"` + custom sidebar sections), threads, DMs, and interactive TUI configure
-
-### Targets
-- ✅ **Obsidian** - Implemented with YAML frontmatter and hierarchical structure
-- ✅ **Logseq** - Implemented with property blocks and flat structure
-
-### Configuration Features
-- ✅ **Multi-source support** with `enabled_sources` array
-- ✅ **Per-source configuration** (intervals, priorities, filtering, output routing)
-- ✅ **Multi-instance Gmail** (work, personal, newsletters) with independent configurations
-- ✅ **Thread grouping** with configurable modes (individual, consolidated, summary)
-- ✅ **Filename sanitization** (no spaces, command-line friendly)
-- ✅ **Simplified output directory** structure with per-source subdirectories
-- ✅ **Local repository configuration** support
-- ✅ **Comprehensive validation** and management commands
-
-## Command Structure
-
-### Core Commands
-- **`gmail`** - Sync Gmail emails to PKM systems
-  - Supports multiple Gmail instances (work, personal, newsletters)
-  - Gmail-specific configuration and filtering
-  - Thread grouping: individual, consolidated, or summary modes
-  - Example: `pkm-sync gmail --source gmail_work --target obsidian`
-
-- **`calendar`** - List and sync Google Calendar events
-  - Calendar-specific functionality
-  - Example: `pkm-sync calendar --start 2025-01-01 --end 2025-01-31`
-
-- **`drive`** - Sync Google Drive documents (Docs, Sheets, Slides) to PKM systems
-  - Reads `google_drive` sources from config file (folder IDs, shared drives, workspace types)
-  - `drive fetch <URL>` - Fetch a single document by URL and write to stdout (unchanged)
-  - Example: `pkm-sync drive --source my_drive --target obsidian --since 7d`
-  - Example: `pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md`
-
-### Utility Commands
-- **`configure [source-name]`** - Interactively configure what to sync from each source
-  - Connects to the source API, shows available options with recent-item previews
-  - Multi-select TUI powered by `github.com/charmbracelet/huh`
-  - Supports Slack (channels/DMs), Gmail (labels), Google Drive (folders/shared drives), Jira (projects/issue types/statuses), Google Calendar (calendars)
-  - Shows a diff of added/removed items before saving
-  - Example: `pkm-sync configure` — pick from configured sources
-  - Example: `pkm-sync configure slack_redhat` — configure a specific source
-  - Example: `pkm-sync configure --type slack` — create a new Slack source interactively
-  - Requires an interactive TTY; gracefully errors if run piped/in scripts
-
-- **`setup`** - Verify authentication configuration
-  - Tests all Google services (Calendar, Drive, Gmail)
-  - Provides clear error messages and instructions
-
-- **`config`** - Manage configuration files
-  - Subcommands: `init`, `show`, `path`, `edit`, `validate`
-  - Configuration management and validation
-
-## OAuth Setup Requirements
-
-Users must:
-1. Create Google Cloud project with Calendar/Drive/Gmail APIs enabled
-2. Configure OAuth consent screen for "Desktop application"
-3. Add `http://127.0.0.1:*` to authorized redirect URIs (enables automatic authorization flow)
-4. Download credentials.json to config directory or use `--credentials` flag
-5. Run `./pkm-sync setup` to verify configuration and complete OAuth flow
-
-**Gmail-specific setup**:
-- Enable Gmail API in Google Cloud Console
-- Required scopes: `gmail.readonly` (automatically requested)
-- Same OAuth credentials work for all Google services
-
-## Transformer Pipeline System
-
-The transformer pipeline provides a configurable, chainable processing system for items between source fetch and target export. This enables content processing features like filtering, tagging, content cleanup, and future AI analysis.
-
-### Core Architecture
-- **Transformer Interface**: `Transform([]models.FullItem) ([]models.FullItem, error)` pattern
-- **Segregated interfaces**: `ContentTransformer` for content modification, `MetadataTransformer` for metadata enrichment
-- **TransformPipeline**: Chains multiple transformers with configurable error handling
-- **Configuration-driven**: Enable/disable transformers and configure processing order
-- **Interface-based**: Works seamlessly with FullItem interface supporting Thread and BasicItem types
-
-### Configuration Example
-```yaml
-transformers:
-  enabled: true
-  pipeline_order: ["content_cleanup", "auto_tagging", "filter"]
-  error_strategy: "log_and_continue"  # or "fail_fast", "skip_item"
-  transformers:
-    content_cleanup:
-      strip_prefixes: true
-    auto_tagging:
-      rules:
-        - pattern: "meeting"
-          tags: ["work", "meeting"]
-        - pattern: "urgent"
-          tags: ["priority", "urgent"]
-    filter:
-      min_content_length: 50
-      exclude_source_types: ["spam"]
-      required_tags: ["important"]
-```
-
-### Built-in Transformers
-- **`content_cleanup`**: Converts HTML to Markdown, strips quoted text, normalizes whitespace, removes email prefixes ("Re:", "Fwd:")
-- **`auto_tagging`**: Adds tags based on content patterns and source metadata
-- **`filter`**: Filters items by content length, source type, required tags
-- **`link_extraction`**: Extracts and indexes URLs from content
-- **`signature_removal`**: Removes email signatures from content
-- **`thread_grouping`**: Groups related emails into conversation threads
-
-### Error Handling Strategies
-- **`fail_fast`**: Stop processing on first transformer error
-- **`log_and_continue`**: Log errors but continue with original items
-- **`skip_item`**: Log errors and skip problematic items
-
-### Integration Points
-- **Sync Engine**: Automatically applies transformations between fetch and export
-- **Configuration**: Transformers configured in main config.yaml
-- **CLI**: Fully backward compatible - no CLI changes required
-
-## Gmail Thread Grouping
-
-The Gmail source supports intelligent thread grouping to reduce email clutter and improve organization.
-
-### Thread Modes
-- **`individual`** (default) - Each email is treated as a separate item
-- **`consolidated`** - All messages in a thread are combined into a single file
-- **`summary`** - Creates summary files with key messages from each thread
-
-### Configuration Example
-```yaml
-sources:
-  gmail_work:
-    type: gmail
-    gmail:
-      include_threads: true           # Enable thread processing
-      thread_mode: "summary"          # Use summary mode
-      thread_summary_length: 3        # Show 3 key messages per thread
-      query: "in:inbox to:me"
-```
-
-### Thread Processing Features
-- **Smart message selection** - Prioritizes different senders, longer content, attachments
-- **Filename sanitization** - No spaces, command-line friendly filenames
-- **Thread metadata** - Participants, duration, message count
-- **Subject cleaning** - Removes "Re:", "Fwd:" prefixes
-
-### Output Examples
-- Consolidated: `Thread_PR-discussion-fix-security-issue_8-messages.md`
-- Summary: `Thread-Summary_meeting-notes-weekly-sync_5-messages.md`
-- Individual: `Re-Project-status-update.md`
 
 ## Development Workflow
 
-### Development Setup
-```bash
-# Clone the repository and install Git hooks (REQUIRED)
-git clone <repository-url>
-cd pkm-sync
-./scripts/install-hooks.sh
-```
-
-**⚠️ Important:** The pre-commit hook runs `go fmt` and `make ci` (lint, test, build) before each commit. Commits will be blocked if quality checks fail. This is **required** for all contributors to prevent CI failures.
-
 ### GitHub Workflow
-**Always use `gh` CLI for GitHub interactions** - issues, PRs, repository management. Do not use direct API calls or other GitHub tools.
+**Always use `gh` CLI for GitHub interactions** — issues, PRs, repository management. Do not use direct API calls or other GitHub tools.
 
-### Testing
-```bash
-# Run all tests (preferred)
-make test
+### Agent Development System
 
-# Run tests directly
-go test ./...                                    # All tests
-go test -race ./...                              # With race detection
-go test -bench=. ./...                           # Run benchmarks
-go test ./cmd                                    # Specific package
-go test -v ./internal/sources/google/gmail       # Verbose output
-```
+The repository includes a Claude Code agent coordination system in `.claude/agents/` with specialized agents for: feature-architect, code-implementer, security-analyst, performance-optimizer, test-strategist, bug-hunter, code-reviewer, technical-writer, documentation-writer, and coordinator.
 
-## Agent Development System
-
-### Agent Coordination Setup
-The repository includes a Claude Code agent coordination system located in `.claude/agents/` for specialized development workflows.
-
-#### Available Agents
-- **feature-architect**: System design and architecture planning
-- **code-implementer**: Implementation of features and fixes
-- **security-analyst**: Security analysis and threat modeling  
-- **performance-optimizer**: Performance analysis and optimization
-- **test-strategist**: Test strategy and quality assurance
-- **bug-hunter**: Debugging and issue resolution
-- **code-reviewer**: Code quality and maintainability review
-- **technical-writer**: Technical documentation creation
-- **documentation-writer**: User-focused documentation and guides
-- **coordinator**: Multi-agent workflow orchestration
-
-#### Agent Configuration Files
-```
-.claude/
-├── agents/              # Agent definitions (committed)
-│   ├── coordinator.md   # Main coordination agent with patterns
-│   ├── feature-architect.md
-│   ├── code-implementer.md
-│   └── ...             # Other specialized agents
-└── settings.local.json  # Local permissions (NOT committed)
-```
-
-All code changes must pass `make ci` before completion:
-- **Lint**: `golangci-lint run` with comprehensive rules
-- **Test**: `go test ./...` with race detection
-- **Build**: `go build -v ./...`
-
-### Agent Integration
-Agents must follow project standards:
-- Run `make ci` before completing tasks
-- Use `gh` CLI for GitHub interactions
-- Update relevant documentation when changing functionality
+All code changes must pass `make ci` before completion (lint + test + build). Agents must use `gh` CLI for GitHub interactions and update relevant documentation when changing functionality.
 
 ## Claude Code Skills
 
@@ -341,23 +179,27 @@ Five Claude Code skills in `~/.claude/skills/` expose pkm-sync capabilities to C
 
 ### Keeping Documentation Up to Date
 
-**Before committing any changes**, review whether the changes affect this file (CLAUDE.md) or the skills below and update them accordingly.
+**Before committing any changes**, review whether the changes affect this file (CLAUDE.md), README.md, or the skills and update them accordingly.
 
 **This file (CLAUDE.md)** should be updated when:
-- New commands or subcommands are added
-- New sources or targets are implemented
 - Architecture or data flow changes
-- New dependencies are added
+- New source or sink implementations are added
+- Internal interfaces or abstractions change
+- New dependencies or runtime requirements are added
 - Build, test, or development workflow changes
-- Implementation status changes (mark items ✅ when complete)
+
+**README.md** should be updated when:
+- New commands, subcommands, or flags are added
+- New user-facing configuration options are introduced
+- Authentication setup steps change
+- Troubleshooting guidance is needed for new features
 
 **Skills** should be updated when:
-
-- **New CLI flags or commands** → update `pkm-sync-data`, `pkm-calendar`, or `pkm-config` skills
-- **Database schema changes** (archive.db, slack.db) → update `email-search` or `slack-search` skills
-- **New source types** → add config templates to `pkm-config`, add sync examples to `pkm-sync-data`
-- **Changed command names or flags** → update the relevant skill's examples and flags reference
-- **New config options** → update YAML templates in `pkm-config`
+- **New CLI flags or commands** -> update `pkm-sync-data`, `pkm-calendar`, or `pkm-config` skills
+- **Database schema changes** (archive.db, slack.db) -> update `email-search` or `slack-search` skills
+- **New source types** -> add config templates to `pkm-config`, add sync examples to `pkm-sync-data`
+- **Changed command names or flags** -> update the relevant skill's examples and flags reference
+- **New config options** -> update YAML templates in `pkm-config`
 
 Skills are self-contained SKILL.md files — edit them directly:
 ```
