@@ -132,14 +132,14 @@ func (s *JiraSource) Fetch(since time.Time, limit int) ([]models.FullItem, error
 	return allItems, nil
 }
 
-// searchWithAllFields performs a V2 search with fields=*all to retrieve all issue fields.
+// searchWithAllFields performs a search with fields=*all to retrieve all issue fields.
 func (s *JiraSource) searchWithAllFields(jql string, from, limit uint) (*jiraclient.SearchResult, error) {
 	path := fmt.Sprintf(
-		"/search?jql=%s&startAt=%d&maxResults=%d&fields=*all",
+		"/search/jql?jql=%s&startAt=%d&maxResults=%d&fields=*all",
 		url.QueryEscape(jql), from, limit,
 	)
 
-	res, err := s.client.GetV2(context.Background(), path, nil)
+	res, err := s.client.Get(context.Background(), path, nil)
 	if err != nil {
 		return nil, err
 	}

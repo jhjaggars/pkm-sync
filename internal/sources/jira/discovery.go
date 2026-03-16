@@ -27,7 +27,7 @@ type JiraStatus struct {
 
 // ListProjects returns all projects accessible to the authenticated user.
 func (s *JiraSource) ListProjects() ([]*JiraProject, error) {
-	res, err := s.client.GetV2(context.Background(), "/project", nil)
+	res, err := s.client.Get(context.Background(), "/project", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list jira projects: %w", err)
 	}
@@ -55,7 +55,7 @@ func (s *JiraSource) ListProjects() ([]*JiraProject, error) {
 func (s *JiraSource) ListIssueTypes(projectKey string) ([]*JiraIssueType, error) {
 	path := fmt.Sprintf("/project/%s", url.PathEscape(projectKey))
 
-	res, err := s.client.GetV2(context.Background(), path, nil)
+	res, err := s.client.Get(context.Background(), path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project %s: %w", projectKey, err)
 	}
@@ -85,7 +85,7 @@ func (s *JiraSource) ListIssueTypes(projectKey string) ([]*JiraIssueType, error)
 func (s *JiraSource) ListStatuses(projectKey string) ([]*JiraStatus, error) {
 	path := fmt.Sprintf("/project/%s/statuses", url.PathEscape(projectKey))
 
-	res, err := s.client.GetV2(context.Background(), path, nil)
+	res, err := s.client.Get(context.Background(), path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get statuses for %s: %w", projectKey, err)
 	}

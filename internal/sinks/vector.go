@@ -148,7 +148,7 @@ func (s *VectorSink) indexSource(
 	}
 
 	// Build list of documents to process, skipping already-indexed ones.
-	var pending []pendingDoc
+	pending := make([]pendingDoc, 0, len(groups))
 
 	for threadID, group := range groups {
 		if indexedThreads[threadID] && !s.cfg.Reindex {
@@ -221,45 +221,7 @@ func (s *VectorSink) indexSource(
 		}
 
 		// Generate embeddings for the batch.
-		var batchEmbeddings [][]float32
-
-		if s.provider != nil {
-			if len(batch) == 1 {
-				// Single-embed path.
-				embedding, embedErr := s.provider.Embed(ctx, batch[0].content)
-				if embedErr != nil {
-					slog.Warn("Failed to embed document",
-						"thread_id", batch[0].threadID,
-						"subject", batch[0].group.subject,
-						"chars", batch[0].originalLen,
-						"error", embedErr)
-
-					batchEmbeddings = [][]float32{nil}
-				} else {
-					batchEmbeddings = [][]float32{embedding}
-				}
-			} else {
-				// Batch-embed path (one HTTP call for all texts in the batch).
-				texts := make([]string, len(batch))
-				for j, p := range batch {
-					texts[j] = p.content
-				}
-
-				embeddings, embedErr := s.provider.EmbedBatch(ctx, texts)
-				if embedErr != nil {
-					slog.Warn("Failed to batch embed",
-						"batch_start", i,
-						"batch_size", len(batch),
-						"error", embedErr)
-
-					batchEmbeddings = make([][]float32, len(batch)) // all nil — fall back to metadata-only
-				} else {
-					batchEmbeddings = embeddings
-				}
-			}
-		} else {
-			batchEmbeddings = make([][]float32, len(batch)) // metadata-only: no embeddings
-		}
+		batchEmbeddings := s.embedBatch(ctx, batch, i)
 
 		// Upsert each document in the batch.
 		for j, p := range batch {
@@ -287,9 +249,51 @@ func (s *VectorSink) indexSource(
 	return indexed, metadataOnly, skipped, failed, nil
 }
 
+// embedBatch generates embeddings for a batch of pending documents.
+// Returns a slice of embeddings (nil entries mean metadata-only for that doc).
+func (s *VectorSink) embedBatch(ctx context.Context, batch []pendingDoc, batchIdx int) [][]float32 {
+	if s.provider == nil {
+		return make([][]float32, len(batch)) // metadata-only: no embeddings
+	}
+
+	if len(batch) == 1 {
+		embedding, embedErr := s.provider.Embed(ctx, batch[0].content)
+		if embedErr != nil {
+			slog.Warn("Failed to embed document",
+				"thread_id", batch[0].threadID,
+				"subject", batch[0].group.subject,
+				"chars", batch[0].originalLen,
+				"error", embedErr)
+
+			return [][]float32{nil}
+		}
+
+		return [][]float32{embedding}
+	}
+
+	texts := make([]string, len(batch))
+	for j, p := range batch {
+		texts[j] = p.content
+	}
+
+	embeddings, embedErr := s.provider.EmbedBatch(ctx, texts)
+	if embedErr != nil {
+		slog.Warn("Failed to batch embed",
+			"batch_start", batchIdx,
+			"batch_size", len(batch),
+			"error", embedErr)
+
+		return make([][]float32, len(batch)) // all nil — fall back to metadata-only
+	}
+
+	return embeddings
+}
+
 // Search performs a semantic search query against the vector store.
 // It requires an embedding provider; returns an error in metadata-only mode.
-func (s *VectorSink) Search(ctx context.Context, query string, limit int, filters vectorstore.SearchFilters) ([]vectorstore.SearchResult, error) {
+func (s *VectorSink) Search(
+	ctx context.Context, query string, limit int, filters vectorstore.SearchFilters,
+) ([]vectorstore.SearchResult, error) {
 	if s.provider == nil {
 		return nil, fmt.Errorf("search requires an embedding provider; none configured (metadata-only mode)")
 	}
