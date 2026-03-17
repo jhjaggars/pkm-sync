@@ -329,19 +329,15 @@ Agents must follow project standards:
 
 ## Claude Code Skills
 
-Five Claude Code skills in `~/.claude/skills/` expose pkm-sync capabilities to Claude directly:
+The `pkm-search` skill in the ObsidianVault exposes search across all pkm-sync sinks:
 
-| Skill | Purpose |
-|-------|---------|
-| `email-search` | Query `~/.config/pkm-sync/archive.db` for Gmail messages via FTS4 or metadata |
-| `slack-search` | Query `~/.config/pkm-sync/slack.db` for Slack messages via LIKE |
-| `pkm-calendar` | View Google Calendar events via `pkm-sync calendar` |
-| `pkm-sync-data` | Run syncs, build vector index, semantic search via `pkm-sync` |
-| `pkm-config` | Manage configuration and OAuth setup via `pkm-sync config` / `pkm-sync setup` |
+| Skill | Location | Purpose |
+|-------|----------|---------|
+| `pkm-search` | `ObsidianVault/.claude/skills/pkm-search/SKILL.md` | Unified search: semantic via `pkm-sync search`, Gmail FTS4 via `archive.db`, Slack via `slack.db` |
 
 ### Keeping Documentation Up to Date
 
-**Before committing any changes**, review whether the changes affect this file (CLAUDE.md) or the skills below and update them accordingly.
+**Before committing any changes**, review whether the changes affect this file (CLAUDE.md) or the skill below and update them accordingly.
 
 **This file (CLAUDE.md)** should be updated when:
 - New commands or subcommands are added
@@ -351,19 +347,8 @@ Five Claude Code skills in `~/.claude/skills/` expose pkm-sync capabilities to C
 - Build, test, or development workflow changes
 - Implementation status changes (mark items ✅ when complete)
 
-**Skills** should be updated when:
-
-- **New CLI flags or commands** → update `pkm-sync-data`, `pkm-calendar`, or `pkm-config` skills
-- **Database schema changes** (archive.db, slack.db) → update `email-search` or `slack-search` skills
-- **New source types** → add config templates to `pkm-config`, add sync examples to `pkm-sync-data`
-- **Changed command names or flags** → update the relevant skill's examples and flags reference
-- **New config options** → update YAML templates in `pkm-config`
-
-Skills are self-contained SKILL.md files — edit them directly:
-```
-~/.claude/skills/email-search/SKILL.md
-~/.claude/skills/slack-search/SKILL.md
-~/.claude/skills/pkm-calendar/SKILL.md
-~/.claude/skills/pkm-sync-data/SKILL.md
-~/.claude/skills/pkm-config/SKILL.md
-```
+**`pkm-search` skill** should be updated when:
+- **New CLI flags or commands** added to `pkm-sync search` or `pkm-sync index`
+- **Database schema changes** to `archive.db` or `slack.db`
+- **New source types** are added (add them to the decision guide and DB paths table)
+- **DB paths change** in `config.yaml`

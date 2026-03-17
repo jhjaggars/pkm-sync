@@ -148,6 +148,9 @@ func GetDefaultConfig() *models.Config {
 			RequestDelay: 100,
 			MaxPerSync:   0,
 		},
+		Slack: models.SlackConfig{
+			DBPath: "", // Will be resolved to ~/.config/pkm-sync/slack.db at runtime
+		},
 	}
 }
 

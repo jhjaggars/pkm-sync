@@ -30,6 +30,9 @@ type Config struct {
 
 	// Email archive settings
 	Archive ArchiveConfig `json:"archive" yaml:"archive"`
+
+	// Slack archive settings
+	Slack SlackConfig `json:"slack" yaml:"slack"`
 }
 
 // TransformConfig defines transformer pipeline configuration.
@@ -364,6 +367,11 @@ type EmbeddingsConfig struct {
 	APIURL     string `json:"api_url"    yaml:"api_url"`    // API base URL
 	APIKey     string `json:"api_key"    yaml:"api_key"`    // API key (for OpenAI)
 	Dimensions int    `json:"dimensions" yaml:"dimensions"` // Embedding dimensions
+}
+
+// SlackConfig defines configuration for the Slack archive sink.
+type SlackConfig struct {
+	DBPath string `json:"db_path" yaml:"db_path"` // Path to Slack SQLite archive
 }
 
 // ArchiveConfig defines configuration for the EML + SQLite email archive.

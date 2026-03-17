@@ -147,9 +147,14 @@ func maybeCreateArchiveSink(cfg *models.Config, fetcher sinks.RawMessageFetcher)
 	}, fetcher)
 }
 
-// maybeCreateSlackArchiveSink creates a SlackArchiveSink at the given path (or the default path).
+// maybeCreateSlackArchiveSink creates a SlackArchiveSink using the fallback chain:
+// explicit dbPath arg (CLI flag) → cfg.Slack.DBPath (config file) → platform default.
 // The caller must call Close() on non-nil results.
-func maybeCreateSlackArchiveSink(dbPath string) (*sinks.SlackArchiveSink, error) {
+func maybeCreateSlackArchiveSink(dbPath string, cfg *models.Config) (*sinks.SlackArchiveSink, error) {
+	if dbPath == "" && cfg != nil {
+		dbPath = cfg.Slack.DBPath
+	}
+
 	if dbPath == "" {
 		configDir, err := config.GetConfigDir()
 		if err != nil {
@@ -591,7 +596,7 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 
 	// Wire SlackArchiveSink for Slack sources.
 	if ssc.SourceType == "slack" {
-		slackArchiveSink, slackErr := maybeCreateSlackArchiveSink(ssc.SlackDBPath)
+		slackArchiveSink, slackErr := maybeCreateSlackArchiveSink(ssc.SlackDBPath, cfg)
 		if slackErr != nil {
 			return fmt.Errorf("failed to create slack archive sink: %w", slackErr)
 		}
@@ -630,7 +635,7 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 	}
 
 	if ssc.DryRun {
-		return handleDryRun(ssc, fileSink, syncResult.Items)
+		return handleDryRun(ssc, fileSink, syncResult.Items, cfg)
 	}
 
 	// Update sub-item membership in state for each successfully synced source.
@@ -667,9 +672,13 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 }
 
 // handleDryRun prints a dry-run summary appropriate for the source type.
-func handleDryRun(ssc sourceSyncConfig, fileSink *sinks.FileSink, items []models.FullItem) error {
+func handleDryRun(ssc sourceSyncConfig, fileSink *sinks.FileSink, items []models.FullItem, cfg *models.Config) error {
 	if ssc.SourceType == "slack" {
 		dbPath := ssc.SlackDBPath
+		if dbPath == "" && cfg != nil {
+			dbPath = cfg.Slack.DBPath
+		}
+
 		if dbPath == "" {
 			configDir, _ := config.GetConfigDir()
 			dbPath = filepath.Join(configDir, "slack.db")
