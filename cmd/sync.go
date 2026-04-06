@@ -93,7 +93,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		}
 
 		switch sourceConfig.Type {
-		case "gmail", "google_calendar", "google_drive", "slack", "jira":
+		case "gmail", "google_calendar", "google_drive", "slack", "jira", "servicenow":
 			typeGroups[sourceConfig.Type] = append(typeGroups[sourceConfig.Type], srcName)
 		default:
 			fmt.Printf("Warning: source '%s' has unsupported type '%s', skipping\n", srcName, sourceConfig.Type)
@@ -116,6 +116,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		{"google_drive", "Drive", "documents"},
 		{"slack", "Slack", "messages"},
 		{"jira", "Jira", "issues"},
+		{"servicenow", "ServiceNow", "tickets"},
 	}
 
 	// Filter to groups that have at least one configured source.

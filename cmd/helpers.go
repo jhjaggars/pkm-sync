@@ -15,6 +15,7 @@ import (
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google"
 	jirasource "pkm-sync/internal/sources/jira"
+	serviceNowSource "pkm-sync/internal/sources/servicenow"
 	slacksource "pkm-sync/internal/sources/slack"
 	"pkm-sync/internal/state"
 	syncer "pkm-sync/internal/sync"
@@ -74,6 +75,13 @@ func createSourceWithConfig(sourceID string, sourceConfig models.SourceConfig, c
 		return source, nil
 	case "jira":
 		source := jirasource.NewJiraSource(sourceID, sourceConfig)
+		if err := source.Configure(nil, nil); err != nil {
+			return nil, err
+		}
+
+		return source, nil
+	case "servicenow":
+		source := serviceNowSource.NewServiceNowSource(sourceID, sourceConfig)
 		if err := source.Configure(nil, nil); err != nil {
 			return nil, err
 		}
@@ -332,6 +340,12 @@ func getSourceSubItems(sourceType string, sourceConfig models.SourceConfig) []st
 	switch sourceType {
 	case "jira":
 		items = append(items, sourceConfig.Jira.ProjectKeys...)
+
+	case "servicenow":
+		items = append(items, sourceConfig.ServiceNow.Tables...)
+		if q := sourceConfig.ServiceNow.Query; q != "" {
+			items = append(items, "query:"+q)
+		}
 
 	case "slack":
 		items = append(items, sourceConfig.Slack.Channels...)

@@ -1,0 +1,9 @@
+{
+  "name": "pkm-sync-servicenow-auth",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright-based ServiceNow token extraction for pkm-sync",
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}

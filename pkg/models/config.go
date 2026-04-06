@@ -89,11 +89,12 @@ type SourceConfig struct {
 	Priority     int           `json:"priority,omitempty"      yaml:"priority,omitempty"`
 
 	// Source-specific configurations
-	Google GoogleSourceConfig `json:"google,omitempty" yaml:"google,omitempty"`
-	Slack  SlackSourceConfig  `json:"slack,omitempty"  yaml:"slack,omitempty"`
-	Gmail  GmailSourceConfig  `json:"gmail,omitempty"  yaml:"gmail,omitempty"`
-	Jira   JiraSourceConfig   `json:"jira,omitempty"   yaml:"jira,omitempty"`
-	Drive  DriveSourceConfig  `json:"drive,omitempty"  yaml:"drive,omitempty"`
+	Google     GoogleSourceConfig     `json:"google,omitempty"     yaml:"google,omitempty"`
+	Slack      SlackSourceConfig      `json:"slack,omitempty"      yaml:"slack,omitempty"`
+	Gmail      GmailSourceConfig      `json:"gmail,omitempty"      yaml:"gmail,omitempty"`
+	Jira       JiraSourceConfig       `json:"jira,omitempty"       yaml:"jira,omitempty"`
+	Drive      DriveSourceConfig      `json:"drive,omitempty"      yaml:"drive,omitempty"`
+	ServiceNow ServiceNowSourceConfig `json:"servicenow,omitempty" yaml:"servicenow,omitempty"`
 }
 
 // DriveSourceConfig defines configuration for a Google Drive source.
@@ -352,6 +353,22 @@ type JiraSourceConfig struct {
 	IncludeComments    bool `json:"include_comments"    yaml:"include_comments"`
 	IncludeHistory     bool `json:"include_history"     yaml:"include_history"`
 	IncludeAttachments bool `json:"include_attachments" yaml:"include_attachments"`
+}
+
+// ServiceNowSourceConfig defines configuration for a ServiceNow source.
+type ServiceNowSourceConfig struct {
+	// InstanceURL is the base URL of the ServiceNow instance (e.g. "https://redhat.service-now.com").
+	InstanceURL string `json:"instance_url" yaml:"instance_url"`
+
+	// Tables is the list of ServiceNow tables to sync (default: ["sc_req_item"]).
+	Tables []string `json:"tables" yaml:"tables"`
+
+	// Query is the sysparm_query filter applied to all table fetches.
+	// Defaults to tickets assigned to or opened by the authenticated user.
+	Query string `json:"query,omitempty" yaml:"query,omitempty"`
+
+	// RequestDelay is the delay between successive API requests (default: 200ms).
+	RequestDelay time.Duration `json:"request_delay,omitempty" yaml:"request_delay,omitempty"`
 }
 
 // VectorDBConfig defines vector database configuration.

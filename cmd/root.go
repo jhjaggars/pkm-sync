@@ -8,6 +8,7 @@ import (
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/keystore"
 	"pkm-sync/internal/sources/google/auth"
+	servicenow "pkm-sync/internal/sources/servicenow"
 	slack "pkm-sync/internal/sources/slack"
 
 	"github.com/spf13/cobra"
@@ -78,6 +79,7 @@ Commands:
 		} else {
 			auth.SetStore(store)
 			slack.SetStore(store)
+			servicenow.SetStore(store)
 		}
 	},
 }
