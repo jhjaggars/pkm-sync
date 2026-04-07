@@ -2,6 +2,8 @@ package google
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,7 +13,6 @@ import (
 
 // mockDriveExporter is a test double for driveExporter.
 type mockDriveExporter struct {
-	// listFiles is called per folderID; returns the configured files or error.
 	listFiles       []*drive.DriveFileInfo
 	listErr         error
 	sharedFiles     []*drive.DriveFileInfo
@@ -19,6 +20,15 @@ type mockDriveExporter struct {
 	exportContent   string
 	exportErr       error
 	configureCalled bool
+
+	// Recorded arguments for assertion in tests.
+	lastMaxBytes int64
+
+	// Concurrency probing: when exportDelay > 0, ExportAsString blocks for that
+	// duration so tests can observe peak in-flight calls.
+	exportDelay    time.Duration
+	inFlight       atomic.Int64
+	peakInFlight   atomic.Int64
 }
 
 func (m *mockDriveExporter) Configure(_ models.DriveSourceConfig) {
@@ -33,7 +43,27 @@ func (m *mockDriveExporter) ListSharedWithMe(_ time.Time, _ drive.ListFilesOptio
 	return m.sharedFiles, m.sharedErr
 }
 
-func (m *mockDriveExporter) ExportAsString(_ string, _ string, _ bool, _ int64) (string, error) {
+func (m *mockDriveExporter) ExportAsString(_ string, _ string, _ bool, maxBytes int64) (string, error) {
+	m.lastMaxBytes = maxBytes
+
+	if m.exportDelay > 0 {
+		current := m.inFlight.Add(1)
+		// Update peak if current exceeds it.
+		for {
+			peak := m.peakInFlight.Load()
+			if current <= peak {
+				break
+			}
+
+			if m.peakInFlight.CompareAndSwap(peak, current) {
+				break
+			}
+		}
+
+		time.Sleep(m.exportDelay)
+		m.inFlight.Add(-1)
+	}
+
 	return m.exportContent, m.exportErr
 }
 
@@ -55,11 +85,11 @@ func TestConvertDriveFile_Doc(t *testing.T) {
 	src := newTestGoogleDriveSource(mock, models.DriveSourceConfig{})
 
 	file := &drive.DriveFileInfo{
-		ID:          "doc1",
-		Name:        "My Doc",
-		MimeType:    drive.MimeTypeGoogleDoc,
-		WebViewLink: "https://docs.google.com/...",
-		CreatedTime: time.Now(),
+		ID:           "doc1",
+		Name:         "My Doc",
+		MimeType:     drive.MimeTypeGoogleDoc,
+		WebViewLink:  "https://docs.google.com/...",
+		CreatedTime:  time.Now(),
 		ModifiedTime: time.Now(),
 	}
 
@@ -210,6 +240,29 @@ func TestConvertDriveFile_CustomExportFormat(t *testing.T) {
 	}
 }
 
+// TestConvertDriveFile_MaxBytesForwarded verifies that MaxFileSizeBytes is passed
+// through to ExportAsString so the size limit is actually enforced at the HTTP layer.
+func TestConvertDriveFile_MaxBytesForwarded(t *testing.T) {
+	mock := &mockDriveExporter{exportContent: "content"}
+	cfg := models.DriveSourceConfig{MaxFileSizeBytes: 512}
+	src := newTestGoogleDriveSource(mock, cfg)
+
+	file := &drive.DriveFileInfo{
+		ID:       "doc5",
+		Name:     "Bounded Doc",
+		MimeType: drive.MimeTypeGoogleDoc,
+	}
+
+	_, err := src.convertDriveFile(file, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.lastMaxBytes != 512 {
+		t.Errorf("ExportAsString received maxBytes=%d, want 512", mock.lastMaxBytes)
+	}
+}
+
 // ---- fetchDrive tests ----
 
 func TestFetchDrive_NotInitialized(t *testing.T) {
@@ -351,15 +404,28 @@ func TestFetchDrive_ListError(t *testing.T) {
 	}
 }
 
+// TestFetchDrive_ParallelExports verifies that MaxConcurrentExports controls real
+// concurrency. Each ExportAsString call blocks briefly so goroutines overlap; the
+// test asserts that peak in-flight calls is >1 and ≤ MaxConcurrentExports.
 func TestFetchDrive_ParallelExports(t *testing.T) {
-	files := []*drive.DriveFileInfo{
-		{ID: "p1", Name: "P1", MimeType: drive.MimeTypeGoogleDoc},
-		{ID: "p2", Name: "P2", MimeType: drive.MimeTypeGoogleDoc},
-		{ID: "p3", Name: "P3", MimeType: drive.MimeTypeGoogleDoc},
+	const numFiles = 6
+	const maxConcurrent = 3
+
+	files := make([]*drive.DriveFileInfo, numFiles)
+	for i := range files {
+		files[i] = &drive.DriveFileInfo{
+			ID:       string(rune('a' + i)),
+			Name:     "Doc",
+			MimeType: drive.MimeTypeGoogleDoc,
+		}
 	}
 
-	mock := &mockDriveExporter{listFiles: files, exportContent: "parallel content"}
-	cfg := models.DriveSourceConfig{MaxConcurrentExports: 3}
+	mock := &mockDriveExporter{
+		listFiles:    files,
+		exportContent: "content",
+		exportDelay:  20 * time.Millisecond, // enough overlap to measure peak
+	}
+	cfg := models.DriveSourceConfig{MaxConcurrentExports: maxConcurrent}
 	src := newTestGoogleDriveSource(mock, cfg)
 
 	items, err := src.fetchDrive(time.Now(), 0)
@@ -367,8 +433,49 @@ func TestFetchDrive_ParallelExports(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if len(items) != numFiles {
+		t.Errorf("expected %d items, got %d", numFiles, len(items))
+	}
+
+	peak := mock.peakInFlight.Load()
+	if peak <= 1 {
+		t.Errorf("peak in-flight = %d, want >1 (exports should run concurrently)", peak)
+	}
+
+	if peak > maxConcurrent {
+		t.Errorf("peak in-flight = %d, exceeds MaxConcurrentExports=%d", peak, maxConcurrent)
+	}
+}
+
+// TestFetchDrive_SequentialWhenNotConfigured verifies that with MaxConcurrentExports
+// unset (0), exports run one at a time.
+func TestFetchDrive_SequentialWhenNotConfigured(t *testing.T) {
+	files := []*drive.DriveFileInfo{
+		{ID: "s1", Name: "S1", MimeType: drive.MimeTypeGoogleDoc},
+		{ID: "s2", Name: "S2", MimeType: drive.MimeTypeGoogleDoc},
+		{ID: "s3", Name: "S3", MimeType: drive.MimeTypeGoogleDoc},
+	}
+
+	mock := &mockDriveExporter{
+		listFiles:    files,
+		exportContent: "content",
+		exportDelay:  10 * time.Millisecond,
+	}
+	// MaxConcurrentExports = 0 → defaults to 1 (sequential)
+	src := newTestGoogleDriveSource(mock, models.DriveSourceConfig{})
+
+	items, err := src.fetchDrive(time.Now(), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
 	if len(items) != 3 {
-		t.Errorf("expected 3 items from parallel export, got %d", len(items))
+		t.Errorf("expected 3 items, got %d", len(items))
+	}
+
+	peak := mock.peakInFlight.Load()
+	if peak > 1 {
+		t.Errorf("peak in-flight = %d, want ≤1 for sequential mode", peak)
 	}
 }
 
@@ -390,3 +497,9 @@ func TestFetchDrive_SharedWithMe(t *testing.T) {
 		t.Errorf("expected 1 shared item, got %d", len(items))
 	}
 }
+
+// Ensure mockDriveExporter satisfies driveExporter (compile-time check).
+var _ driveExporter = (*mockDriveExporter)(nil)
+
+// Ensure sync is imported (used in mockDriveExporter indirectly via atomic).
+var _ sync.Mutex

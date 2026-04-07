@@ -63,6 +63,8 @@ func (s *Service) rateLimit() error {
 }
 
 // executeWithRetry runs fn with exponential backoff for transient Drive API errors.
+// rateLimit() is called before every attempt (including retries) so that request
+// pacing and the total request cap are enforced consistently.
 func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{}, error) {
 	const (
 		maxRetries = 3
@@ -80,6 +82,10 @@ func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{},
 
 			slog.Info("Retrying Drive API call", "delay", delay, "attempt", attempt+1, "max_retries", maxRetries)
 			time.Sleep(delay)
+		}
+
+		if err := s.rateLimit(); err != nil {
+			return nil, err
 		}
 
 		result, err := fn()
@@ -470,10 +476,6 @@ func GetExportMimeType(fileMimeType, format string) (string, error) {
 
 // ExportDocument exports a Google Workspace document and returns the content as a ReadCloser.
 func (s *Service) ExportDocument(fileID, exportMimeType string) (io.ReadCloser, error) {
-	if err := s.rateLimit(); err != nil {
-		return nil, err
-	}
-
 	raw, err := s.executeWithRetry(func() (interface{}, error) {
 		return s.client.Files.Export(fileID, exportMimeType).Download()
 	})
@@ -566,10 +568,6 @@ func (s *Service) ListFiles(opts ListFilesOptions) ([]*DriveFileInfo, error) {
 
 		if pageToken != "" {
 			req = req.PageToken(pageToken)
-		}
-
-		if err := s.rateLimit(); err != nil {
-			return files, err
 		}
 
 		raw, err := s.executeWithRetry(func() (interface{}, error) { return req.Do() })
@@ -680,12 +678,17 @@ func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdow
 
 	var reader io.Reader = body
 	if maxBytes > 0 {
-		reader = io.LimitReader(body, maxBytes)
+		// Read one extra byte so we can distinguish "exactly maxBytes" from "truncated".
+		reader = io.LimitReader(body, maxBytes+1)
 	}
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", fmt.Errorf("failed to read exported content: %w", err)
+	}
+
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return "", fmt.Errorf("exported content exceeds size limit of %d bytes", maxBytes)
 	}
 
 	if convertToMarkdown {

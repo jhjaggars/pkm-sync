@@ -324,6 +324,14 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 			return fmt.Errorf("invalid slide_export_format %q for google_drive (supported: txt, html)",
 				config.Drive.SlideExportFormat)
 		}
+
+		if config.Drive.MaxFileSizeBytes < 0 {
+			return fmt.Errorf("max_file_size_bytes must be non-negative for google_drive sources")
+		}
+
+		if config.Drive.MaxConcurrentExports < 0 {
+			return fmt.Errorf("max_concurrent_exports must be non-negative for google_drive sources")
+		}
 	case "slack":
 		if config.Slack.WorkspaceURL == "" {
 			return fmt.Errorf("workspace_url is required for slack sources")
