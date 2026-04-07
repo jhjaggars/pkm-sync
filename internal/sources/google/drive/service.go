@@ -4,21 +4,28 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"pkm-sync/pkg/models"
 
 	mdconverter "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
 type Service struct {
-	client *drive.Service
+	client       *drive.Service
+	requestDelay time.Duration
+	maxRequests  int
+	mu           sync.Mutex
+	requestCount int
 }
 
 func NewService(httpClient *http.Client) (*Service, error) {
@@ -28,6 +35,110 @@ func NewService(httpClient *http.Client) (*Service, error) {
 	}
 
 	return &Service{client: driveService}, nil
+}
+
+// Configure applies rate-limiting settings from a DriveSourceConfig.
+func (s *Service) Configure(cfg models.DriveSourceConfig) {
+	s.requestDelay = cfg.RequestDelay
+	s.maxRequests = cfg.MaxRequests
+}
+
+// rateLimit enforces the configured request delay between API calls and checks the
+// total request cap. Returns an error if the cap has been reached.
+func (s *Service) rateLimit() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.maxRequests > 0 && s.requestCount >= s.maxRequests {
+		return fmt.Errorf("drive API request cap (%d) reached", s.maxRequests)
+	}
+
+	if s.requestDelay > 0 && s.requestCount > 0 {
+		time.Sleep(s.requestDelay)
+	}
+
+	s.requestCount++
+
+	return nil
+}
+
+// executeWithRetry runs fn with exponential backoff for transient Drive API errors.
+func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{}, error) {
+	const (
+		maxRetries = 3
+		baseDelay  = time.Second
+	)
+
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+
+			slog.Info("Retrying Drive API call", "delay", delay, "attempt", attempt+1, "max_retries", maxRetries)
+			time.Sleep(delay)
+		}
+
+		result, err := fn()
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+
+		if googleErr, ok := err.(*googleapi.Error); ok {
+			switch googleErr.Code {
+			case 403, 429: // Rate limit / too many requests
+				if attempt < maxRetries-1 {
+					slog.Info("Drive rate limit, retrying", "code", googleErr.Code)
+					continue
+				}
+			case 500, 502, 503, 504: // Server errors
+				if attempt < maxRetries-1 {
+					slog.Info("Drive server error, retrying", "code", googleErr.Code)
+					continue
+				}
+			default:
+				return nil, err
+			}
+		}
+
+		if isDriveTemporaryError(err) && attempt < maxRetries-1 {
+			slog.Info("Drive temporary error, retrying", "error", err)
+			continue
+		}
+
+		return nil, err
+	}
+
+	return nil, fmt.Errorf("max retries (%d) exceeded, last error: %w", maxRetries, lastErr)
+}
+
+// isDriveTemporaryError checks if an error is likely transient and worth retrying.
+func isDriveTemporaryError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+	for _, substr := range []string{
+		"connection reset",
+		"timeout",
+		"temporary failure",
+		"network is unreachable",
+		"connection refused",
+		"i/o timeout",
+		"eof",
+	} {
+		if strings.Contains(errStr, substr) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetFileMetadata retrieves metadata for a Google Drive file.
@@ -359,12 +470,18 @@ func GetExportMimeType(fileMimeType, format string) (string, error) {
 
 // ExportDocument exports a Google Workspace document and returns the content as a ReadCloser.
 func (s *Service) ExportDocument(fileID, exportMimeType string) (io.ReadCloser, error) {
-	resp, err := s.client.Files.Export(fileID, exportMimeType).Download()
+	if err := s.rateLimit(); err != nil {
+		return nil, err
+	}
+
+	raw, err := s.executeWithRetry(func() (interface{}, error) {
+		return s.client.Files.Export(fileID, exportMimeType).Download()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to export document: %w", err)
 	}
 
-	return resp.Body, nil
+	return raw.(*http.Response).Body, nil
 }
 
 // IsGoogleWorkspaceFile returns true if the MIME type is one of the three supported Workspace types.
@@ -451,10 +568,16 @@ func (s *Service) ListFiles(opts ListFilesOptions) ([]*DriveFileInfo, error) {
 			req = req.PageToken(pageToken)
 		}
 
-		result, err := req.Do()
+		if err := s.rateLimit(); err != nil {
+			return files, err
+		}
+
+		raw, err := s.executeWithRetry(func() (interface{}, error) { return req.Do() })
 		if err != nil {
 			return nil, fmt.Errorf("failed to list drive files: %w", err)
 		}
+
+		result := raw.(*drive.FileList)
 
 		for _, f := range result.Files {
 			info := convertFileInfo(f)
@@ -543,8 +666,9 @@ func (s *Service) ListSharedWithMe(since time.Time, opts ListFilesOptions) ([]*D
 }
 
 // ExportAsString exports a Google Workspace file as a string. If convertToMarkdown is true
-// and the content is HTML, it will be converted to Markdown.
-func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdown bool) (string, error) {
+// and the content is HTML, it will be converted to Markdown. maxBytes limits how many bytes
+// are read from the export response; 0 means no limit.
+func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdown bool, maxBytes int64) (string, error) {
 	body, err := s.ExportDocument(fileID, exportMimeType)
 	if err != nil {
 		return "", err
@@ -554,7 +678,12 @@ func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdow
 		_ = body.Close()
 	}()
 
-	data, err := io.ReadAll(body)
+	var reader io.Reader = body
+	if maxBytes > 0 {
+		reader = io.LimitReader(body, maxBytes)
+	}
+
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", fmt.Errorf("failed to read exported content: %w", err)
 	}

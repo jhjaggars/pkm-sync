@@ -2,8 +2,11 @@ package google
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"pkm-sync/internal/sources/google/auth"
 	"pkm-sync/internal/sources/google/calendar"
@@ -12,6 +15,15 @@ import (
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 )
+
+// driveExporter is the subset of drive.Service used by fetchDrive and convertDriveFile.
+// It is defined as an interface to allow injection of test doubles.
+type driveExporter interface {
+	Configure(cfg models.DriveSourceConfig)
+	ListFilesInFolder(folderID string, since time.Time, recursive bool, opts drive.ListFilesOptions) ([]*drive.DriveFileInfo, error)
+	ListSharedWithMe(since time.Time, opts drive.ListFilesOptions) ([]*drive.DriveFileInfo, error)
+	ExportAsString(fileID, exportMimeType string, convertToMarkdown bool, maxBytes int64) (string, error)
+}
 
 const (
 	SourceTypeGoogle   = "google"
@@ -22,7 +34,7 @@ const (
 
 type GoogleSource struct {
 	calendarService *calendar.Service
-	driveService    *drive.Service
+	driveService    driveExporter
 	gmailService    *gmail.Service
 	httpClient      *http.Client
 	config          models.SourceConfig
@@ -105,10 +117,13 @@ func (g *GoogleSource) initializeCalendarAndDriveServices(client *http.Client, c
 	g.configureCalendarService(config)
 
 	// Initialize drive service
-	g.driveService, err = drive.NewService(client)
+	driveSvc, err := drive.NewService(client)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Drive service: %w", err)
 	}
+
+	driveSvc.Configure(g.config.Drive)
+	g.driveService = driveSvc
 
 	return nil
 }
@@ -239,14 +254,22 @@ func (g *GoogleSource) SupportsRealtime() bool {
 
 // initializeDriveOnlyService initializes only the Drive service for Drive sources.
 func (g *GoogleSource) initializeDriveOnlyService(client *http.Client) error {
-	var err error
-
-	g.driveService, err = drive.NewService(client)
+	svc, err := drive.NewService(client)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Drive service: %w", err)
 	}
 
+	svc.Configure(g.config.Drive)
+	g.driveService = svc
+
 	return nil
+}
+
+// conversionResult holds the outcome of a single file export.
+type conversionResult struct {
+	item models.FullItem
+	name string
+	err  error
 }
 
 // fetchDrive fetches Google Drive documents as items.
@@ -334,17 +357,72 @@ func (g *GoogleSource) fetchDrive(since time.Time, limit int) ([]models.FullItem
 		allFiles = allFiles[:limit]
 	}
 
-	items := make([]models.FullItem, 0, len(allFiles))
-
-	for _, f := range allFiles {
-		item, err := g.convertDriveFile(f, cfg)
-		if err != nil {
-			fmt.Printf("Warning: failed to convert drive file '%s': %v\n", f.Name, err)
-
-			continue
+	// Skip files that exceed the configured size limit before exporting.
+	if cfg.MaxFileSizeBytes > 0 {
+		filtered := allFiles[:0]
+		for _, f := range allFiles {
+			if f.Size > cfg.MaxFileSizeBytes {
+				slog.Warn("Skipping Drive file: exceeds size limit",
+					"file", f.Name,
+					"size", f.Size,
+					"limit", cfg.MaxFileSizeBytes,
+				)
+			} else {
+				filtered = append(filtered, f)
+			}
 		}
 
-		items = append(items, item)
+		allFiles = filtered
+	}
+
+	// Export files, optionally in parallel.
+	maxConcurrent := cfg.MaxConcurrentExports
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+
+	results := make([]conversionResult, len(allFiles))
+
+	eg := new(errgroup.Group)
+	sem := make(chan struct{}, maxConcurrent)
+
+	for i, f := range allFiles {
+		i, f := i, f
+		eg.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			item, err := g.convertDriveFile(f, cfg)
+			results[i] = conversionResult{item: item, name: f.Name, err: err}
+
+			return nil
+		})
+	}
+
+	// eg.Wait() never returns non-nil here (goroutines return nil), but check anyway.
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Collect successful items and log a summary of failures.
+	items := make([]models.FullItem, 0, len(results))
+	var failureCount int
+
+	for _, r := range results {
+		if r.err != nil {
+			failureCount++
+			slog.Warn("Failed to convert Drive file", "file", r.name, "error", r.err)
+		} else {
+			items = append(items, r.item)
+		}
+	}
+
+	if failureCount > 0 {
+		slog.Warn("Drive fetch completed with conversion failures",
+			"total", len(allFiles),
+			"failed", failureCount,
+			"succeeded", len(items),
+		)
 	}
 
 	return items, nil
@@ -385,7 +463,7 @@ func (g *GoogleSource) convertDriveFile(
 
 	convertToMarkdown := (format == drive.FormatMD)
 
-	content, err := g.driveService.ExportAsString(file.ID, exportMimeType, convertToMarkdown)
+	content, err := g.driveService.ExportAsString(file.ID, exportMimeType, convertToMarkdown, cfg.MaxFileSizeBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to export file '%s': %w", file.Name, err)
 	}
