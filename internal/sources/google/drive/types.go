@@ -42,3 +42,22 @@ type SharedDriveInfo struct {
 	ID   string
 	Name string
 }
+
+// CommentData represents a comment on a Google Drive document.
+type CommentData struct {
+	ID            string
+	QuotedText    string
+	Author        string
+	Content       string
+	CreatedTime   string
+	Resolved      bool
+	Replies       []ReplyData
+	CommentNumber int
+}
+
+// ReplyData represents a reply to a comment.
+type ReplyData struct {
+	Author      string
+	Content     string
+	CreatedTime string
+}
