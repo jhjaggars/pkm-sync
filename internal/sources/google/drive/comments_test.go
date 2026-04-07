@@ -80,6 +80,15 @@ func TestFormatCommentsAsFootnotes(t *testing.T) {
 			}},
 			want: []string{"**Unknown**"},
 		},
+		{
+			name: "author name with markdown characters",
+			comments: []CommentData{{
+				CommentNumber: 1,
+				Author:        "Alice_[Bot]*",
+				Content:       "Test comment",
+			}},
+			want: []string{`**Alice\_\[Bot\]\***`},
+		},
 	}
 
 	for _, tt := range tests {
@@ -158,6 +167,15 @@ func TestInsertCommentMarkers(t *testing.T) {
 				QuotedText:    "missing text",
 			}},
 			want: "Hello world",
+		},
+		{
+			name:    "overlapping quoted text",
+			content: "The quick brown fox jumps over the lazy dog.",
+			comments: []CommentData{
+				{CommentNumber: 1, QuotedText: "quick brown"},
+				{CommentNumber: 2, QuotedText: "quick brown fox"},
+			},
+			want: "The quick brown[^comment-1] fox[^comment-2] jumps over the lazy dog.",
 		},
 	}
 

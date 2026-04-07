@@ -2,8 +2,21 @@ package drive
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
+
+// escapeMarkdown escapes markdown special characters in text.
+func escapeMarkdown(text string) string {
+	replacer := strings.NewReplacer(
+		"*", "\\*",
+		"_", "\\_",
+		"[", "\\[",
+		"]", "\\]",
+	)
+
+	return replacer.Replace(text)
+}
 
 // FormatCommentsAsFootnotes formats comments as markdown footnote definitions.
 func FormatCommentsAsFootnotes(comments []CommentData) string {
@@ -24,7 +37,7 @@ func FormatCommentsAsFootnotes(comments []CommentData) string {
 			author = "Unknown"
 		}
 
-		sb.WriteString(fmt.Sprintf("**%s**", author))
+		sb.WriteString(fmt.Sprintf("**%s**", escapeMarkdown(author)))
 
 		if c.CreatedTime != "" {
 			sb.WriteString(fmt.Sprintf(" (%s)", c.CreatedTime))
@@ -54,7 +67,7 @@ func FormatCommentsAsFootnotes(comments []CommentData) string {
 				rAuthor = "Unknown"
 			}
 
-			sb.WriteString(fmt.Sprintf("    - **%s**", rAuthor))
+			sb.WriteString(fmt.Sprintf("    - **%s**", escapeMarkdown(rAuthor)))
 
 			if r.CreatedTime != "" {
 				sb.WriteString(fmt.Sprintf(" (%s)", r.CreatedTime))
@@ -72,13 +85,41 @@ func FormatCommentsAsFootnotes(comments []CommentData) string {
 // InsertCommentMarkers inserts footnote reference markers into content at the
 // first occurrence of each comment's quoted text.
 func InsertCommentMarkers(content string, comments []CommentData) string {
+	// Find all match positions in original content
+	type insertion struct {
+		pos    int
+		text   string
+		marker string
+	}
+
+	var insertions []insertion
+
 	for _, c := range comments {
 		if c.QuotedText == "" {
 			continue
 		}
 
+		pos := strings.Index(content, c.QuotedText)
+		if pos == -1 {
+			continue
+		}
+
 		marker := fmt.Sprintf("[^comment-%d]", c.CommentNumber)
-		content = strings.Replace(content, c.QuotedText, c.QuotedText+marker, 1)
+		insertions = append(insertions, insertion{
+			pos:    pos + len(c.QuotedText),
+			text:   c.QuotedText,
+			marker: marker,
+		})
+	}
+
+	// Sort by position descending (apply from end to start)
+	sort.Slice(insertions, func(i, j int) bool {
+		return insertions[i].pos > insertions[j].pos
+	})
+
+	// Apply insertions from end to start
+	for _, ins := range insertions {
+		content = content[:ins.pos] + ins.marker + content[ins.pos:]
 	}
 
 	return content

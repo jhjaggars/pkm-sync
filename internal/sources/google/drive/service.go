@@ -663,60 +663,78 @@ func convertFileInfo(f *drive.File) *DriveFileInfo {
 
 // GetComments retrieves all comments for a Google Drive file.
 func (s *Service) GetComments(fileID string) ([]CommentData, error) {
-	const fields = "comments(id,content,author(displayName),createdTime,resolved,quotedFileContent," +
+	const fields = "nextPageToken,comments(id,content,author(displayName),createdTime,resolved,quotedFileContent," +
 		"replies(content,author(displayName),createdTime))"
 
-	commentList, err := s.client.Comments.List(fileID).Fields(fields).Do()
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve comments: %w", err)
-	}
+	var comments []CommentData
 
-	comments := make([]CommentData, 0, len(commentList.Comments))
+	pageToken := ""
+	commentNumber := 1
 
-	for i, c := range commentList.Comments {
-		comment := CommentData{
-			ID:            c.Id,
-			Content:       c.Content,
-			Resolved:      c.Resolved,
-			CommentNumber: i + 1,
+	for {
+		req := s.client.Comments.List(fileID).Fields(fields).PageSize(100)
+
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
 		}
 
-		if c.Author != nil {
-			comment.Author = c.Author.DisplayName
+		commentList, err := req.Do()
+		if err != nil {
+			return nil, fmt.Errorf("unable to retrieve comments: %w", err)
 		}
 
-		if c.QuotedFileContent != nil {
-			comment.QuotedText = c.QuotedFileContent.Value
-		}
-
-		if c.CreatedTime != "" {
-			if t, err := time.Parse(time.RFC3339, c.CreatedTime); err == nil {
-				comment.CreatedTime = t.Format("2006-01-02 15:04")
+		for _, c := range commentList.Comments {
+			comment := CommentData{
+				ID:            c.Id,
+				Content:       c.Content,
+				Resolved:      c.Resolved,
+				CommentNumber: commentNumber,
 			}
-		}
+			commentNumber++
 
-		if len(c.Replies) > 0 {
-			comment.Replies = make([]ReplyData, 0, len(c.Replies))
-			for _, r := range c.Replies {
-				reply := ReplyData{
-					Content: r.Content,
+			if c.Author != nil {
+				comment.Author = c.Author.DisplayName
+			}
+
+			if c.QuotedFileContent != nil {
+				comment.QuotedText = c.QuotedFileContent.Value
+			}
+
+			if c.CreatedTime != "" {
+				if t, err := time.Parse(time.RFC3339, c.CreatedTime); err == nil {
+					comment.CreatedTime = t.Format("2006-01-02 15:04")
 				}
+			}
 
-				if r.Author != nil {
-					reply.Author = r.Author.DisplayName
-				}
-
-				if r.CreatedTime != "" {
-					if t, err := time.Parse(time.RFC3339, r.CreatedTime); err == nil {
-						reply.CreatedTime = t.Format("2006-01-02 15:04")
+			if len(c.Replies) > 0 {
+				comment.Replies = make([]ReplyData, 0, len(c.Replies))
+				for _, r := range c.Replies {
+					reply := ReplyData{
+						Content: r.Content,
 					}
-				}
 
-				comment.Replies = append(comment.Replies, reply)
+					if r.Author != nil {
+						reply.Author = r.Author.DisplayName
+					}
+
+					if r.CreatedTime != "" {
+						if t, err := time.Parse(time.RFC3339, r.CreatedTime); err == nil {
+							reply.CreatedTime = t.Format("2006-01-02 15:04")
+						}
+					}
+
+					comment.Replies = append(comment.Replies, reply)
+				}
 			}
+
+			comments = append(comments, comment)
 		}
 
-		comments = append(comments, comment)
+		if commentList.NextPageToken == "" {
+			break
+		}
+
+		pageToken = commentList.NextPageToken
 	}
 
 	return comments, nil

@@ -94,6 +94,11 @@ func runDriveFetchCommand(cmd *cobra.Command, args []string) error {
 		_ = content.Close()
 	}()
 
+	// Warn if --comments used with non-markdown format
+	if fetchComments && fetchFormat != "md" {
+		fmt.Fprintln(os.Stderr, "Warning: --comments is only supported with --format md, ignoring")
+	}
+
 	// Non-markdown formats: write content directly to stdout
 	if fetchFormat != "md" {
 		_, err = io.Copy(os.Stdout, content)
