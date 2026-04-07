@@ -38,26 +38,37 @@ func NewService(httpClient *http.Client) (*Service, error) {
 }
 
 // Configure applies rate-limiting settings from a DriveSourceConfig.
+// It acquires the mutex so it is safe to call concurrently with rateLimit.
+// In practice Configure is called once during single-threaded initialisation,
+// but the lock removes any data-race risk if that ever changes.
 func (s *Service) Configure(cfg models.DriveSourceConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.requestDelay = cfg.RequestDelay
 	s.maxRequests = cfg.MaxRequests
 }
 
 // rateLimit enforces the configured request delay between API calls and checks the
 // total request cap. Returns an error if the cap has been reached.
+// The mutex is released before sleeping so parallel export goroutines are not
+// serialised on the sleep duration.
 func (s *Service) rateLimit() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.maxRequests > 0 && s.requestCount >= s.maxRequests {
+		s.mu.Unlock()
 		return fmt.Errorf("drive API request cap (%d) reached", s.maxRequests)
 	}
 
-	if s.requestDelay > 0 && s.requestCount > 0 {
-		time.Sleep(s.requestDelay)
-	}
-
+	needsDelay := s.requestDelay > 0 && s.requestCount > 0
+	delay := s.requestDelay
 	s.requestCount++
+	s.mu.Unlock()
+
+	if needsDelay {
+		time.Sleep(delay)
+	}
 
 	return nil
 }
@@ -149,10 +160,14 @@ func isDriveTemporaryError(err error) bool {
 
 // GetFileMetadata retrieves metadata for a Google Drive file.
 func (s *Service) GetFileMetadata(fileID string) (*models.DriveFile, error) {
-	file, err := s.client.Files.Get(fileID).Fields("id,name,mimeType,webViewLink,modifiedTime,owners").Do()
+	raw, err := s.executeWithRetry(func() (interface{}, error) {
+		return s.client.Files.Get(fileID).Fields("id,name,mimeType,webViewLink,modifiedTime,owners").Do()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve file metadata: %w", err)
 	}
+
+	file := raw.(*drive.File)
 
 	driveFile := &models.DriveFile{
 		ID:          file.Id,
@@ -182,10 +197,14 @@ func (s *Service) ExportDocAsMarkdown(fileID string, outputPath string) error {
 	}
 
 	// Export as plain text first (closest to markdown)
-	resp, err := s.client.Files.Export(fileID, "text/plain").Download()
+	raw, err := s.executeWithRetry(func() (interface{}, error) {
+		return s.client.Files.Export(fileID, "text/plain").Download()
+	})
 	if err != nil {
 		return fmt.Errorf("unable to export document: %w", err)
 	}
+
+	resp := raw.(*http.Response)
 
 	defer func() {
 		_ = resp.Body.Close()
@@ -217,12 +236,14 @@ func (s *Service) ExportDocAsMarkdown(fileID string, outputPath string) error {
 
 // IsGoogleDocByID checks if a file ID represents a Google Doc.
 func (s *Service) IsGoogleDocByID(fileID string) bool {
-	file, err := s.client.Files.Get(fileID).Fields("mimeType").Do()
+	raw, err := s.executeWithRetry(func() (interface{}, error) {
+		return s.client.Files.Get(fileID).Fields("mimeType").Do()
+	})
 	if err != nil {
 		return false
 	}
 
-	return s.IsGoogleDoc(file.MimeType)
+	return s.IsGoogleDoc(raw.(*drive.File).MimeType)
 }
 
 // GetAttachmentsFromEvent extracts Google Drive file attachments from a calendar event.
@@ -730,10 +751,12 @@ func (s *Service) ListSharedDrives() ([]*SharedDriveInfo, error) {
 			req = req.PageToken(pageToken)
 		}
 
-		result, err := req.Do()
+		raw, err := s.executeWithRetry(func() (interface{}, error) { return req.Do() })
 		if err != nil {
 			return nil, fmt.Errorf("failed to list shared drives: %w", err)
 		}
+
+		result := raw.(*drive.DriveList)
 
 		for _, d := range result.Drives {
 			drives = append(drives, &SharedDriveInfo{ID: d.Id, Name: d.Name})
