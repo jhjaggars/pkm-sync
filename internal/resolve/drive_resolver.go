@@ -24,8 +24,9 @@ type DriveResolver struct {
 	pattern *regexp.Regexp
 }
 
-// NewDriveResolver creates a DriveResolver backed by the given drive.Service.
-func NewDriveResolver(svc *drive.Service, cfg models.DriveSourceConfig) *DriveResolver {
+// NewDriveResolver creates a DriveResolver backed by the given driveClient.
+// Accepts the driveClient interface so tests can inject mocks directly.
+func NewDriveResolver(svc driveClient, cfg models.DriveSourceConfig) *DriveResolver {
 	return &DriveResolver{
 		svc:     svc,
 		cfg:     cfg,

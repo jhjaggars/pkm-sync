@@ -338,13 +338,14 @@ func TestEngine_OriginalItemsAlwaysIncluded(t *testing.T) {
 func TestEngine_FirstResolverWins(t *testing.T) {
 	const targetURL = "https://example.com/item"
 
-	calls := []string{}
+	var firstCalled, secondCalled atomic.Bool
 
 	r1 := &mockResolver{
 		name:      "first",
 		canHandle: func(url string) bool { return true },
 		resolve: func(_ context.Context, url string) (models.FullItem, error) {
-			calls = append(calls, "first")
+			firstCalled.Store(true)
+
 			return makeResolvedItem("from-first", url), nil
 		},
 	}
@@ -353,7 +354,8 @@ func TestEngine_FirstResolverWins(t *testing.T) {
 		name:      "second",
 		canHandle: func(url string) bool { return true },
 		resolve: func(_ context.Context, url string) (models.FullItem, error) {
-			calls = append(calls, "second")
+			secondCalled.Store(true)
+
 			return makeResolvedItem("from-second", url), nil
 		},
 	}
@@ -366,8 +368,9 @@ func TestEngine_FirstResolverWins(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(calls) != 1 || calls[0] != "first" {
-		t.Errorf("only the first matching resolver should be called, got: %v", calls)
+	if !firstCalled.Load() || secondCalled.Load() {
+		t.Errorf("only first resolver should be called: first=%v second=%v",
+			firstCalled.Load(), secondCalled.Load())
 	}
 }
 

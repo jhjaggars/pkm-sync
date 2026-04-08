@@ -214,8 +214,10 @@ func crossReference(existing []models.FullItem, resolved []models.FullItem) {
 	}
 }
 
-// normaliseURL strips trailing slashes and lowercases the scheme+host so that
-// http://Example.com/Foo and https://example.com/Foo/ don't count as different.
+// normaliseURL lowercases the scheme and host and strips trailing slashes.
+// Path casing is preserved: some targets are case-sensitive so paths are not
+// lowercased. http://Example.com/path/ and https://example.com/path resolve to
+// the same key, but https://example.com/Path and /path are distinct.
 func normaliseURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {

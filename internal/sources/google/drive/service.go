@@ -2,9 +2,12 @@ package drive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -91,8 +94,10 @@ func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{},
 				delay = 30 * time.Second
 			}
 
-			slog.Info("Retrying Drive API call", "delay", delay, "attempt", attempt+1, "max_retries", maxRetries)
-			time.Sleep(delay)
+			// Add ±50% jitter to spread out retries and avoid thundering-herd.
+			jitter := time.Duration(float64(delay) * (0.5 + rand.Float64())) //nolint:gosec
+			slog.Info("Retrying Drive API call", "delay", jitter, "attempt", attempt+1, "max_retries", maxRetries)
+			time.Sleep(jitter)
 		}
 
 		if err := s.rateLimit(); err != nil {
@@ -137,12 +142,26 @@ func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{},
 }
 
 // isDriveTemporaryError checks if an error is likely transient and worth retrying.
+// It prefers structured error checks (context timeout, net.Error) before falling
+// back to string matching as a last resort.
 func isDriveTemporaryError(err error) bool {
 	if err == nil {
 		return false
 	}
 
+	// Structured checks first.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	// Fallback: string matching for errors that don't implement net.Error.
 	errStr := strings.ToLower(err.Error())
+
 	for _, substr := range []string{
 		"connection reset",
 		"timeout",

@@ -16,8 +16,9 @@ type jiraFetcher interface {
 	FetchIssue(ctx context.Context, issueKey string) (models.FullItem, error)
 }
 
-// issueKeyRe matches standard Jira issue keys like PROJ-123 or MY-PROJ-42.
-var issueKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
+// issueKeyRe matches standard Jira issue keys like PROJ-123, MY-PROJ-42, or A-1.
+// Single-letter project keys are supported by some Jira instances.
+var issueKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9]*-\d+`)
 
 // JiraResolver resolves Jira issue URLs to FullItems.
 type JiraResolver struct {

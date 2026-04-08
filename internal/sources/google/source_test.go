@@ -2,7 +2,6 @@ package google
 
 import (
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -500,6 +499,3 @@ func TestFetchDrive_SharedWithMe(t *testing.T) {
 
 // Ensure mockDriveExporter satisfies driveExporter (compile-time check).
 var _ driveExporter = (*mockDriveExporter)(nil)
-
-// Ensure sync is imported (used in mockDriveExporter indirectly via atomic).
-var _ sync.Mutex

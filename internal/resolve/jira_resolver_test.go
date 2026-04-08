@@ -56,6 +56,7 @@ func TestJiraResolver_ExtractIssueKey(t *testing.T) {
 		{"https://company.atlassian.net/browse/PROJ-123", "PROJ-123", false},
 		{"https://company.atlassian.net/browse/MY-42", "MY-42", false},
 		{"https://company.atlassian.net/browse/ABC-9999", "ABC-9999", false},
+		{"https://company.atlassian.net/browse/A-1", "A-1", false}, // single-letter project key
 		{"https://company.atlassian.net/browse/", "", true},
 		{"not-a-url", "", true},
 	}
