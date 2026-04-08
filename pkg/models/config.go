@@ -124,6 +124,11 @@ type DriveSourceConfig struct {
 	// Rate limiting
 	RequestDelay time.Duration `json:"request_delay" yaml:"request_delay"`
 	MaxRequests  int           `json:"max_requests"  yaml:"max_requests"`
+
+	// MaxFileSizeBytes skips export of files larger than this size (0 = no limit).
+	MaxFileSizeBytes int64 `json:"max_file_size_bytes" yaml:"max_file_size_bytes"`
+	// MaxConcurrentExports controls how many file exports run in parallel (0 or 1 = sequential).
+	MaxConcurrentExports int `json:"max_concurrent_exports" yaml:"max_concurrent_exports"`
 }
 
 type GoogleSourceConfig struct {
