@@ -1,0 +1,92 @@
+package resolve
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"pkm-sync/pkg/models"
+)
+
+// jiraFetcher is the subset of JiraSource used by JiraResolver.
+// Defined as an interface so tests can inject a mock without a live Jira API.
+type jiraFetcher interface {
+	FetchIssue(ctx context.Context, issueKey string) (models.FullItem, error)
+}
+
+// issueKeyRe matches standard Jira issue keys like PROJ-123 or MY-PROJ-42.
+var issueKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
+
+// JiraResolver resolves Jira issue URLs to FullItems.
+type JiraResolver struct {
+	fetcher  jiraFetcher
+	baseHost string // lowercased host of the Jira instance, e.g. "company.atlassian.net"
+}
+
+// NewJiraResolver creates a JiraResolver for the given Jira instance URL and source.
+// instanceURL should be the full base URL, e.g. "https://company.atlassian.net".
+func NewJiraResolver(fetcher jiraFetcher, instanceURL string) (*JiraResolver, error) {
+	parsed, err := url.Parse(instanceURL)
+	if err != nil {
+		return nil, fmt.Errorf("jira resolver: invalid instance URL %q: %w", instanceURL, err)
+	}
+
+	return &JiraResolver{
+		fetcher:  fetcher,
+		baseHost: strings.ToLower(parsed.Host),
+	}, nil
+}
+
+// Name implements interfaces.Resolver.
+func (r *JiraResolver) Name() string { return "jira" }
+
+// CanResolve implements interfaces.Resolver. Returns true for URLs on the
+// configured Jira instance that contain a /browse/<ISSUE-KEY> path segment.
+func (r *JiraResolver) CanResolve(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	if strings.ToLower(parsed.Host) != r.baseHost {
+		return false
+	}
+
+	return strings.Contains(parsed.Path, "/browse/") &&
+		issueKeyRe.MatchString(parsed.Path)
+}
+
+// Resolve implements interfaces.Resolver.
+func (r *JiraResolver) Resolve(ctx context.Context, rawURL string) (models.FullItem, error) {
+	key, err := extractIssueKey(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("jira resolver: %w", err)
+	}
+
+	item, err := r.fetcher.FetchIssue(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("jira resolver: fetch %s: %w", key, err)
+	}
+
+	// Tag as resolved so sinks can distinguish it from directly-synced items.
+	item.SetTags(append(item.GetTags(), "resolved"))
+
+	return item, nil
+}
+
+// extractIssueKey pulls the Jira issue key out of a /browse/<KEY> URL path.
+func extractIssueKey(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+
+	key := issueKeyRe.FindString(parsed.Path)
+	if key == "" {
+		return "", fmt.Errorf("no issue key found in URL %q", rawURL)
+	}
+
+	return key, nil
+}

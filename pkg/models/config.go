@@ -73,6 +73,10 @@ type SyncConfig struct {
 	SubdirFormat    string `json:"subdir_format"     yaml:"subdir_format"` // "yyyy/mm", "yyyy-mm", "source", "flat"
 	MaxFileAge      string `json:"max_file_age"      yaml:"max_file_age"`  // "30d", "6m", "1y"
 	ArchiveOldFiles bool   `json:"archive_old_files" yaml:"archive_old_files"`
+
+	// Cross-source reference resolution
+	ResolveReferences bool `json:"resolve_references" yaml:"resolve_references"` // global default
+	ResolveDepth      int  `json:"resolve_depth"      yaml:"resolve_depth"`      // max depth (0 defaults to 1)
 }
 
 type SourceConfig struct {
@@ -87,6 +91,9 @@ type SourceConfig struct {
 	SyncInterval time.Duration `json:"sync_interval,omitempty" yaml:"sync_interval,omitempty"`
 	Since        string        `json:"since,omitempty"         yaml:"since,omitempty"`
 	Priority     int           `json:"priority,omitempty"      yaml:"priority,omitempty"`
+	// ResolveReferences overrides the global SyncConfig.ResolveReferences for this source.
+	// nil means inherit from the global setting.
+	ResolveReferences *bool `json:"resolve_references,omitempty" yaml:"resolve_references,omitempty"`
 
 	// Source-specific configurations
 	Google     GoogleSourceConfig     `json:"google,omitempty"     yaml:"google,omitempty"`
