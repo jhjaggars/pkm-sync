@@ -44,7 +44,9 @@ func NewJiraResolver(fetcher jiraFetcher, instanceURL string) (*JiraResolver, er
 func (r *JiraResolver) Name() string { return "jira" }
 
 // CanResolve implements interfaces.Resolver. Returns true for URLs on the
-// configured Jira instance that contain a /browse/<ISSUE-KEY> path segment.
+// configured Jira instance whose path is exactly /browse/<ISSUE-KEY>.
+// Only the segment immediately after "/browse/" is validated against the
+// issue key regex to avoid false positives from longer paths.
 func (r *JiraResolver) CanResolve(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -55,8 +57,32 @@ func (r *JiraResolver) CanResolve(rawURL string) bool {
 		return false
 	}
 
-	return strings.Contains(parsed.Path, "/browse/") &&
-		issueKeyRe.MatchString(parsed.Path)
+	segment, ok := browseSegment(parsed.Path)
+	if !ok {
+		return false
+	}
+
+	return issueKeyRe.MatchString(segment)
+}
+
+// browseSegment extracts the path segment immediately after "/browse/".
+// Returns ("", false) if the path does not contain "/browse/".
+func browseSegment(path string) (string, bool) {
+	const prefix = "/browse/"
+
+	idx := strings.Index(path, prefix)
+	if idx < 0 {
+		return "", false
+	}
+
+	segment := path[idx+len(prefix):]
+
+	// Trim any trailing path components (e.g. /edit, /comment).
+	if slash := strings.IndexByte(segment, '/'); slash >= 0 {
+		segment = segment[:slash]
+	}
+
+	return segment, true
 }
 
 // Resolve implements interfaces.Resolver.

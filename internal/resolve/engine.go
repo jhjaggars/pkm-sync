@@ -62,13 +62,18 @@ func (e *Engine) Resolve(
 	copy(allItems, items)
 
 	for depth := 0; depth < maxDepth; depth++ {
-		// Collect URLs from all current items that haven't been fetched yet.
-		newURLs := e.collectNewURLs(allItems, fetched)
+		// Collect URLs from all current items that haven't been fetched yet,
+		// along with a map of which item IDs link to each target URL.
+		newURLs, referrerMap := e.collectNewURLs(allItems, fetched)
 		if len(newURLs) == 0 {
 			break
 		}
 
 		var resolved []models.FullItem
+
+		// resolvedURLToID maps normalised rawURL → resolved item ID, keyed by the
+		// URL used to resolve rather than the resolved item's outbound links.
+		resolvedURLToID := make(map[string]string, len(newURLs))
 
 		for _, rawURL := range newURLs {
 			norm := normaliseURL(rawURL)
@@ -86,7 +91,10 @@ func (e *Engine) Resolve(
 				continue
 			}
 
-			annotateReferenced(item, rawURL)
+			// Record which items referred to this URL so the resolved item
+			// knows who links to it.
+			annotateReferenced(item, referrerMap[norm])
+			resolvedURLToID[norm] = item.GetID()
 			resolved = append(resolved, item)
 		}
 
@@ -95,7 +103,7 @@ func (e *Engine) Resolve(
 		}
 
 		// Cross-reference: tell referring items which resolved IDs they point to.
-		crossReference(allItems, resolved)
+		crossReference(allItems, resolvedURLToID)
 
 		allItems = append(allItems, resolved...)
 
@@ -120,11 +128,16 @@ func (e *Engine) resolveOne(ctx context.Context, rawURL string) (models.FullItem
 	return nil, nil // no resolver matched
 }
 
-// collectNewURLs gathers all link URLs from items that have not been fetched yet.
-func (e *Engine) collectNewURLs(items []models.FullItem, fetched map[string]bool) []string {
+// collectNewURLs gathers resolvable link URLs not yet fetched, together with a
+// referrerMap that maps each normalised target URL to the IDs of items that
+// link to it. The referrerMap is used to populate "referenced_by" metadata on
+// resolved items.
+func (e *Engine) collectNewURLs(
+	items []models.FullItem,
+	fetched map[string]bool,
+) (urls []string, referrerMap map[string][]string) {
 	seen := make(map[string]bool)
-
-	var urls []string
+	referrerMap = make(map[string][]string)
 
 	for _, item := range items {
 		for _, link := range item.GetLinks() {
@@ -133,6 +146,9 @@ func (e *Engine) collectNewURLs(items []models.FullItem, fetched map[string]bool
 			}
 
 			norm := normaliseURL(link.URL)
+
+			// Always track referrers regardless of dedup state.
+			referrerMap[norm] = appendUnique(referrerMap[norm], item.GetID())
 
 			if fetched[norm] || seen[norm] {
 				continue
@@ -151,39 +167,42 @@ func (e *Engine) collectNewURLs(items []models.FullItem, fetched map[string]bool
 		}
 	}
 
-	return urls
+	return urls, referrerMap
 }
 
-// annotateReferenced adds "referenced_by" metadata to a resolved item.
-func annotateReferenced(item models.FullItem, sourceURL string) {
+// annotateReferenced sets "referenced_by" metadata on a resolved item to the
+// IDs of the items that contained the link to it.
+func annotateReferenced(item models.FullItem, referrerIDs []string) {
+	if len(referrerIDs) == 0 {
+		return
+	}
+
 	meta := item.GetMetadata()
 	if meta == nil {
 		meta = make(map[string]interface{})
 	}
 
 	existing, _ := meta["referenced_by"].([]string)
-	meta["referenced_by"] = append(existing, sourceURL)
+	for _, id := range referrerIDs {
+		existing = appendUnique(existing, id)
+	}
+
+	meta["referenced_by"] = existing
 	item.SetMetadata(meta)
 }
 
-// crossReference adds "resolved_refs" metadata to items whose links point to
-// any of the newly resolved items (matched by the URL that was resolved).
-func crossReference(existing []models.FullItem, resolved []models.FullItem) {
-	// Build a set of URLs that produced resolved items, keyed by normalised URL.
-	// We store the resolved item ID so referring items can point by ID too.
-	resolvedByURL := make(map[string]string, len(resolved))
-
-	for _, r := range resolved {
-		for _, link := range r.GetLinks() {
-			if link.URL != "" {
-				resolvedByURL[normaliseURL(link.URL)] = r.GetID()
-			}
-		}
-	}
-
+// crossReference adds "resolved_refs" metadata to existing items whose links
+// were resolved. resolvedURLToID maps normalised target URL → resolved item ID,
+// built directly from the rawURLs used to resolve each item so that items with
+// no self-link (e.g. some Jira items) are still cross-referenced correctly.
+func crossReference(existing []models.FullItem, resolvedURLToID map[string]string) {
 	for _, item := range existing {
 		for _, link := range item.GetLinks() {
-			resolvedID, ok := resolvedByURL[normaliseURL(link.URL)]
+			if link.URL == "" {
+				continue
+			}
+
+			resolvedID, ok := resolvedURLToID[normaliseURL(link.URL)]
 			if !ok {
 				continue
 			}
@@ -194,24 +213,21 @@ func crossReference(existing []models.FullItem, resolved []models.FullItem) {
 			}
 
 			refs, _ := meta["resolved_refs"].([]string)
-
-			// Avoid duplicates.
-			alreadyPresent := false
-
-			for _, r := range refs {
-				if r == resolvedID {
-					alreadyPresent = true
-
-					break
-				}
-			}
-
-			if !alreadyPresent {
-				meta["resolved_refs"] = append(refs, resolvedID)
-				item.SetMetadata(meta)
-			}
+			meta["resolved_refs"] = appendUnique(refs, resolvedID)
+			item.SetMetadata(meta)
 		}
 	}
+}
+
+// appendUnique appends s to slice only if it is not already present.
+func appendUnique(slice []string, s string) []string {
+	for _, v := range slice {
+		if v == s {
+			return slice
+		}
+	}
+
+	return append(slice, s)
 }
 
 // normaliseURL lowercases the scheme and host and strips trailing slashes.

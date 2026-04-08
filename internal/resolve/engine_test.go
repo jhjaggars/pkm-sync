@@ -258,12 +258,16 @@ func TestEngine_CrossRefMetadata(t *testing.T) {
 		t.Errorf("original item missing resolved_refs metadata, got: %v", origMeta["resolved_refs"])
 	}
 
-	// The resolved item should have referenced_by set.
+	// The resolved item should have referenced_by set to the referring item's ID.
 	resolvedMeta := result[1].GetMetadata()
 	refBy, ok := resolvedMeta["referenced_by"].([]string)
 
 	if !ok || len(refBy) == 0 {
 		t.Errorf("resolved item missing referenced_by metadata, got: %v", resolvedMeta["referenced_by"])
+	}
+
+	if len(refBy) > 0 && refBy[0] != original.GetID() {
+		t.Errorf("referenced_by[0] = %q, want referrer ID %q", refBy[0], original.GetID())
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"pkm-sync/pkg/models"
 )
@@ -49,12 +50,14 @@ func TestDriveResolver_CanResolve(t *testing.T) {
 }
 
 func TestDriveResolver_Resolve_GoogleDoc(t *testing.T) {
+	modifiedAt := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 	mock := &mockDriveClient{
 		metadata: &models.DriveFile{
-			ID:          "abc123",
-			Name:        "My Report",
-			MimeType:    "application/vnd.google-apps.document",
-			WebViewLink: "https://docs.google.com/document/d/abc123/edit",
+			ID:           "abc123",
+			Name:         "My Report",
+			MimeType:     "application/vnd.google-apps.document",
+			WebViewLink:  "https://docs.google.com/document/d/abc123/edit",
+			ModifiedTime: modifiedAt,
 		},
 		content: "# My Report\n\nContent here.",
 	}
@@ -71,6 +74,10 @@ func TestDriveResolver_Resolve_GoogleDoc(t *testing.T) {
 		t.Fatal("expected a resolved item, got nil")
 	}
 
+	if item.GetID() != "abc123" {
+		t.Errorf("ID = %q, want %q", item.GetID(), "abc123")
+	}
+
 	if item.GetItemType() != "document" {
 		t.Errorf("ItemType = %q, want %q", item.GetItemType(), "document")
 	}
@@ -81,6 +88,10 @@ func TestDriveResolver_Resolve_GoogleDoc(t *testing.T) {
 
 	if item.GetContent() != mock.content {
 		t.Errorf("Content = %q, want %q", item.GetContent(), mock.content)
+	}
+
+	if !item.GetUpdatedAt().Equal(modifiedAt) {
+		t.Errorf("UpdatedAt = %v, want %v", item.GetUpdatedAt(), modifiedAt)
 	}
 }
 

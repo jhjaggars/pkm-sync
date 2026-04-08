@@ -101,16 +101,19 @@ func (r *DriveResolver) Resolve(_ context.Context, rawURL string) (models.FullIt
 		itemType = "presentation"
 	}
 
-	now := time.Now()
+	updatedAt := meta.ModifiedTime
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
+	}
 
 	item := &models.BasicItem{
-		ID:         "drive_" + fileID,
+		ID:         fileID,
 		Title:      meta.Name,
 		Content:    content,
 		SourceType: "google_drive",
 		ItemType:   itemType,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		CreatedAt:  updatedAt,
+		UpdatedAt:  updatedAt,
 		Tags:       []string{"resolved"},
 		Metadata: map[string]interface{}{
 			"mime_type":     meta.MimeType,

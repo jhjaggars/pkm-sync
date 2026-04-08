@@ -32,10 +32,12 @@ func TestJiraResolver_CanResolve(t *testing.T) {
 	}{
 		{"https://company.atlassian.net/browse/PROJ-123", true},
 		{"https://company.atlassian.net/browse/MY-42", true},
-		{"https://COMPANY.ATLASSIAN.NET/browse/PROJ-1", true},        // case-insensitive host
-		{"https://other.atlassian.net/browse/PROJ-123", false},       // wrong host
-		{"https://company.atlassian.net/issues/PROJ-123", false},     // no /browse/
-		{"https://company.atlassian.net/browse/not-an-issue", false}, // no valid key
+		{"https://COMPANY.ATLASSIAN.NET/browse/PROJ-1", true},               // case-insensitive host
+		{"https://other.atlassian.net/browse/PROJ-123", false},              // wrong host
+		{"https://company.atlassian.net/issues/PROJ-123", false},            // no /browse/
+		{"https://company.atlassian.net/browse/not-an-issue", false},        // no valid key
+		{"https://company.atlassian.net/browse/PROJ-123/edit", true},        // trailing path trimmed
+		{"https://company.atlassian.net/browse/PROJ-123?focusedCommentId=1", true}, // query ignored
 		{"https://slack.com/archives/C123", false},
 	}
 
