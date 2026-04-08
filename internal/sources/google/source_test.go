@@ -26,9 +26,9 @@ type mockDriveExporter struct {
 
 	// Concurrency probing: when exportDelay > 0, ExportAsString blocks for that
 	// duration so tests can observe peak in-flight calls.
-	exportDelay    time.Duration
-	inFlight       atomic.Int64
-	peakInFlight   atomic.Int64
+	exportDelay  time.Duration
+	inFlight     atomic.Int64
+	peakInFlight atomic.Int64
 }
 
 func (m *mockDriveExporter) Configure(_ models.DriveSourceConfig) {
@@ -421,9 +421,9 @@ func TestFetchDrive_ParallelExports(t *testing.T) {
 	}
 
 	mock := &mockDriveExporter{
-		listFiles:    files,
+		listFiles:     files,
 		exportContent: "content",
-		exportDelay:  20 * time.Millisecond, // enough overlap to measure peak
+		exportDelay:   20 * time.Millisecond, // enough overlap to measure peak
 	}
 	cfg := models.DriveSourceConfig{MaxConcurrentExports: maxConcurrent}
 	src := newTestGoogleDriveSource(mock, cfg)
@@ -457,9 +457,9 @@ func TestFetchDrive_SequentialWhenNotConfigured(t *testing.T) {
 	}
 
 	mock := &mockDriveExporter{
-		listFiles:    files,
+		listFiles:     files,
 		exportContent: "content",
-		exportDelay:  10 * time.Millisecond,
+		exportDelay:   10 * time.Millisecond,
 	}
 	// MaxConcurrentExports = 0 → defaults to 1 (sequential)
 	src := newTestGoogleDriveSource(mock, models.DriveSourceConfig{})

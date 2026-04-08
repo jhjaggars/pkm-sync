@@ -14,7 +14,7 @@ import (
 	"pkm-sync/pkg/models"
 )
 
-// Config controls the behaviour of a single Resolve call.
+// Config controls the behavior of a single Resolve call.
 type Config struct {
 	// MaxDepth is the maximum number of resolution rounds to run.
 	// 0 is treated as 1 — at least one round is always attempted.
@@ -77,11 +77,12 @@ func (e *Engine) Resolve(
 			item, err := e.resolveOne(ctx, rawURL)
 			if err != nil {
 				slog.Warn("Reference resolution failed", "url", rawURL, "error", err)
+
 				continue
 			}
 
 			if item == nil {
-				// Resolver signalled skip (e.g. freshness check passed).
+				// Resolver signaled skip (e.g. freshness check passed).
 				continue
 			}
 
@@ -122,6 +123,7 @@ func (e *Engine) resolveOne(ctx context.Context, rawURL string) (models.FullItem
 // collectNewURLs gathers all link URLs from items that have not been fetched yet.
 func (e *Engine) collectNewURLs(items []models.FullItem, fetched map[string]bool) []string {
 	seen := make(map[string]bool)
+
 	var urls []string
 
 	for _, item := range items {
@@ -140,6 +142,7 @@ func (e *Engine) collectNewURLs(items []models.FullItem, fetched map[string]bool
 			for _, r := range e.resolvers {
 				if r.CanResolve(link.URL) {
 					seen[norm] = true
+
 					urls = append(urls, link.URL)
 
 					break
@@ -194,9 +197,11 @@ func crossReference(existing []models.FullItem, resolved []models.FullItem) {
 
 			// Avoid duplicates.
 			alreadyPresent := false
+
 			for _, r := range refs {
 				if r == resolvedID {
 					alreadyPresent = true
+
 					break
 				}
 			}

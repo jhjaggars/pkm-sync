@@ -193,6 +193,7 @@ func TestDriveResolver_Resolve_TaggedAsResolved(t *testing.T) {
 	for _, tag := range tags {
 		if tag == "resolved" {
 			found = true
+
 			break
 		}
 	}
@@ -201,4 +202,3 @@ func TestDriveResolver_Resolve_TaggedAsResolved(t *testing.T) {
 		t.Errorf("resolved item should have 'resolved' tag, got: %v", tags)
 	}
 }
-

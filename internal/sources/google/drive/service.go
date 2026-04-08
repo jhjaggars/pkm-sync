@@ -52,7 +52,7 @@ func (s *Service) Configure(cfg models.DriveSourceConfig) {
 // rateLimit enforces the configured request delay between API calls and checks the
 // total request cap. Returns an error if the cap has been reached.
 // The mutex is released before sleeping so parallel export goroutines are not
-// serialised on the sleep duration.
+// serialized on the sleep duration.
 func (s *Service) rateLimit() error {
 	s.mu.Lock()
 
@@ -111,11 +111,13 @@ func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{},
 			case 403, 429: // Rate limit / too many requests
 				if attempt < maxRetries-1 {
 					slog.Info("Drive rate limit, retrying", "code", googleErr.Code)
+
 					continue
 				}
 			case 500, 502, 503, 504: // Server errors
 				if attempt < maxRetries-1 {
 					slog.Info("Drive server error, retrying", "code", googleErr.Code)
+
 					continue
 				}
 			default:
@@ -196,9 +198,10 @@ func (s *Service) ExportDocAsMarkdown(fileID string, outputPath string) error {
 		return fmt.Errorf("file %s is not a Google Doc", fileID)
 	}
 
-	// Export as plain text first (closest to markdown)
+	// Export as plain text first (closest to markdown).
+	// Body is closed via defer below; bodyclose cannot trace through interface{}.
 	raw, err := s.executeWithRetry(func() (interface{}, error) {
-		return s.client.Files.Export(fileID, "text/plain").Download()
+		return s.client.Files.Export(fileID, "text/plain").Download() //nolint:bodyclose
 	})
 	if err != nil {
 		return fmt.Errorf("unable to export document: %w", err)
@@ -496,9 +499,12 @@ func GetExportMimeType(fileMimeType, format string) (string, error) {
 }
 
 // ExportDocument exports a Google Workspace document and returns the content as a ReadCloser.
+// The caller is responsible for closing the returned body.
 func (s *Service) ExportDocument(fileID, exportMimeType string) (io.ReadCloser, error) {
+	// Body ownership is transferred to the caller via the returned ReadCloser;
+	// bodyclose cannot trace through interface{}.
 	raw, err := s.executeWithRetry(func() (interface{}, error) {
-		return s.client.Files.Export(fileID, exportMimeType).Download()
+		return s.client.Files.Export(fileID, exportMimeType).Download() //nolint:bodyclose
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to export document: %w", err)
@@ -687,7 +693,11 @@ func (s *Service) ListSharedWithMe(since time.Time, opts ListFilesOptions) ([]*D
 // ExportAsString exports a Google Workspace file as a string. If convertToMarkdown is true
 // and the content is HTML, it will be converted to Markdown. maxBytes limits how many bytes
 // are read from the export response; 0 means no limit.
-func (s *Service) ExportAsString(fileID, exportMimeType string, convertToMarkdown bool, maxBytes int64) (string, error) {
+func (s *Service) ExportAsString(
+	fileID, exportMimeType string,
+	convertToMarkdown bool,
+	maxBytes int64,
+) (string, error) {
 	body, err := s.ExportDocument(fileID, exportMimeType)
 	if err != nil {
 		return "", err

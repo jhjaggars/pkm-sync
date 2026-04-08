@@ -28,6 +28,7 @@ func (m *mockResolver) CanResolve(url string) bool {
 
 func (m *mockResolver) Resolve(ctx context.Context, url string) (models.FullItem, error) {
 	m.calls.Add(1)
+
 	return m.resolve(ctx, url)
 }
 
@@ -132,6 +133,7 @@ func TestEngine_DeduplicatesURLs(t *testing.T) {
 func TestEngine_DepthLimit(t *testing.T) {
 	// depth-1 URL resolves to an item that itself links to depth-2 URL
 	const url1 = "https://jira.example.com/browse/PROJ-1"
+
 	const url2 = "https://jira.example.com/browse/PROJ-2"
 
 	resolveCount := atomic.Int64{}
@@ -140,10 +142,12 @@ func TestEngine_DepthLimit(t *testing.T) {
 		canHandle: func(url string) bool { return url == url1 || url == url2 },
 		resolve: func(_ context.Context, url string) (models.FullItem, error) {
 			resolveCount.Add(1)
+
 			if url == url1 {
 				// The resolved item itself links to url2.
 				item := makeResolvedItem("issue-1", url1)
 				item.SetLinks([]models.Link{{URL: url2, Type: "external"}})
+
 				return item, nil
 			}
 
@@ -189,6 +193,7 @@ func TestEngine_DepthLimit(t *testing.T) {
 
 func TestEngine_DefaultDepthIsOne(t *testing.T) {
 	const url1 = "https://example.com/a"
+
 	const url2 = "https://example.com/b"
 
 	resolveCount := atomic.Int64{}
@@ -197,10 +202,12 @@ func TestEngine_DefaultDepthIsOne(t *testing.T) {
 		canHandle: func(url string) bool { return url == url1 || url == url2 },
 		resolve: func(_ context.Context, url string) (models.FullItem, error) {
 			resolveCount.Add(1)
+
 			item := makeResolvedItem("resolved", url)
 			if url == url1 {
 				item.SetLinks([]models.Link{{URL: url2}})
 			}
+
 			return item, nil
 		},
 	}

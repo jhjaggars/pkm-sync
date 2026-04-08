@@ -20,7 +20,12 @@ import (
 // It is defined as an interface to allow injection of test doubles.
 type driveExporter interface {
 	Configure(cfg models.DriveSourceConfig)
-	ListFilesInFolder(folderID string, since time.Time, recursive bool, opts drive.ListFilesOptions) ([]*drive.DriveFileInfo, error)
+	ListFilesInFolder(
+		folderID string,
+		since time.Time,
+		recursive bool,
+		opts drive.ListFilesOptions,
+	) ([]*drive.DriveFileInfo, error)
 	ListSharedWithMe(since time.Time, opts drive.ListFilesOptions) ([]*drive.DriveFileInfo, error)
 	ExportAsString(fileID, exportMimeType string, convertToMarkdown bool, maxBytes int64) (string, error)
 }
@@ -387,9 +392,9 @@ func (g *GoogleSource) fetchDrive(since time.Time, limit int) ([]models.FullItem
 	sem := make(chan struct{}, maxConcurrent)
 
 	for i, f := range allFiles {
-		i, f := i, f
 		eg.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
 			item, err := g.convertDriveFile(f, cfg)
@@ -411,6 +416,7 @@ func (g *GoogleSource) fetchDrive(since time.Time, limit int) ([]models.FullItem
 	for _, r := range results {
 		if r.err != nil {
 			failureCount++
+
 			slog.Warn("Failed to convert Drive file", "file", r.name, "error", r.err)
 		} else {
 			items = append(items, r.item)

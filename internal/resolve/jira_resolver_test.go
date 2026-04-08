@@ -10,9 +10,9 @@ import (
 
 // mockJiraFetcher implements jiraFetcher for tests.
 type mockJiraFetcher struct {
-	item     models.FullItem
-	err      error
-	lastKey  string
+	item    models.FullItem
+	err     error
+	lastKey string
 }
 
 func (m *mockJiraFetcher) FetchIssue(_ context.Context, key string) (models.FullItem, error) {
@@ -32,9 +32,9 @@ func TestJiraResolver_CanResolve(t *testing.T) {
 	}{
 		{"https://company.atlassian.net/browse/PROJ-123", true},
 		{"https://company.atlassian.net/browse/MY-42", true},
-		{"https://COMPANY.ATLASSIAN.NET/browse/PROJ-1", true}, // case-insensitive host
-		{"https://other.atlassian.net/browse/PROJ-123", false}, // wrong host
-		{"https://company.atlassian.net/issues/PROJ-123", false}, // no /browse/
+		{"https://COMPANY.ATLASSIAN.NET/browse/PROJ-1", true},        // case-insensitive host
+		{"https://other.atlassian.net/browse/PROJ-123", false},       // wrong host
+		{"https://company.atlassian.net/issues/PROJ-123", false},     // no /browse/
 		{"https://company.atlassian.net/browse/not-an-issue", false}, // no valid key
 		{"https://slack.com/archives/C123", false},
 	}
@@ -72,6 +72,7 @@ func TestJiraResolver_ExtractIssueKey(t *testing.T) {
 
 		if err != nil {
 			t.Errorf("extractIssueKey(%q) unexpected error: %v", tt.url, err)
+
 			continue
 		}
 
@@ -140,6 +141,7 @@ func TestJiraResolver_Resolve_TaggedAsResolved(t *testing.T) {
 	for _, tag := range item.GetTags() {
 		if tag == "resolved" {
 			found = true
+
 			break
 		}
 	}
