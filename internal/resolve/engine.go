@@ -171,7 +171,7 @@ func (e *Engine) collectNewURLs(
 }
 
 // annotateReferenced sets "referenced_by" metadata on a resolved item to the
-// IDs of the items that contained the link to it.
+// IDs of the items that contained the link to it. Uses a map for O(1) dedup.
 func annotateReferenced(item models.FullItem, referrerIDs []string) {
 	if len(referrerIDs) == 0 {
 		return
@@ -183,8 +183,18 @@ func annotateReferenced(item models.FullItem, referrerIDs []string) {
 	}
 
 	existing, _ := meta["referenced_by"].([]string)
+
+	// Build seen-set once for O(1) membership checks across all referrerIDs.
+	seen := make(map[string]struct{}, len(existing)+len(referrerIDs))
+	for _, id := range existing {
+		seen[id] = struct{}{}
+	}
+
 	for _, id := range referrerIDs {
-		existing = appendUnique(existing, id)
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			existing = append(existing, id)
+		}
 	}
 
 	meta["referenced_by"] = existing
@@ -219,12 +229,16 @@ func crossReference(existing []models.FullItem, resolvedURLToID map[string]strin
 	}
 }
 
-// appendUnique appends s to slice only if it is not already present.
+// appendUnique appends s to slice only if not already present.
+// Uses a map for O(1) membership checks, preserving insertion order.
 func appendUnique(slice []string, s string) []string {
+	seen := make(map[string]struct{}, len(slice))
 	for _, v := range slice {
-		if v == s {
-			return slice
-		}
+		seen[v] = struct{}{}
+	}
+
+	if _, ok := seen[s]; ok {
+		return slice
 	}
 
 	return append(slice, s)

@@ -62,8 +62,7 @@ func TestDriveResolver_Resolve_GoogleDoc(t *testing.T) {
 		content: "# My Report\n\nContent here.",
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	item, err := r.Resolve(context.Background(), "https://docs.google.com/document/d/abc123/edit")
 	if err != nil {
@@ -105,8 +104,7 @@ func TestDriveResolver_Resolve_Spreadsheet(t *testing.T) {
 		content: "a,b,c\n1,2,3",
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	item, err := r.Resolve(context.Background(), "https://docs.google.com/spreadsheets/d/sheet1")
 	if err != nil {
@@ -127,8 +125,7 @@ func TestDriveResolver_Resolve_UnsupportedMIME(t *testing.T) {
 		},
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	_, err := r.Resolve(context.Background(), "https://drive.google.com/file/d/pdf1/view")
 	if err == nil {
@@ -141,8 +138,7 @@ func TestDriveResolver_Resolve_MetadataError(t *testing.T) {
 		metadataErr: errors.New("not found"),
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	_, err := r.Resolve(context.Background(), "https://docs.google.com/document/d/missing/edit")
 	if err == nil {
@@ -160,8 +156,7 @@ func TestDriveResolver_Resolve_ExportError(t *testing.T) {
 		contentErr: errors.New("export failed"),
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	_, err := r.Resolve(context.Background(), "https://docs.google.com/document/d/doc1/edit")
 	if err == nil {
@@ -170,8 +165,7 @@ func TestDriveResolver_Resolve_ExportError(t *testing.T) {
 }
 
 func TestDriveResolver_Resolve_BadURL(t *testing.T) {
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = &mockDriveClient{}
+	r := NewDriveResolver(&mockDriveClient{}, models.DriveSourceConfig{})
 
 	// URL that passes CanResolve but has no extractable file ID.
 	_, err := r.Resolve(context.Background(), "https://docs.google.com/")
@@ -190,8 +184,7 @@ func TestDriveResolver_Resolve_TaggedAsResolved(t *testing.T) {
 		content: "content",
 	}
 
-	r := NewDriveResolver(nil, models.DriveSourceConfig{})
-	r.svc = mock
+	r := NewDriveResolver(mock, models.DriveSourceConfig{})
 
 	item, err := r.Resolve(context.Background(), "https://docs.google.com/document/d/doc2/edit")
 	if err != nil {
