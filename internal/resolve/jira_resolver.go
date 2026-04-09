@@ -103,14 +103,20 @@ func (r *JiraResolver) Resolve(ctx context.Context, rawURL string) (models.FullI
 	return item, nil
 }
 
-// extractIssueKey pulls the Jira issue key out of a /browse/<KEY> URL path.
+// extractIssueKey pulls the Jira issue key from the /browse/<KEY> segment of rawURL.
+// Mirrors browseSegment so extraction is consistent with CanResolve validation.
 func extractIssueKey(rawURL string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL %q: %w", rawURL, err)
 	}
 
-	key := issueKeyRe.FindString(parsed.Path)
+	segment, ok := browseSegment(parsed.Path)
+	if !ok {
+		return "", fmt.Errorf("no /browse/ segment in URL %q", rawURL)
+	}
+
+	key := issueKeyRe.FindString(segment)
 	if key == "" {
 		return "", fmt.Errorf("no issue key found in URL %q", rawURL)
 	}

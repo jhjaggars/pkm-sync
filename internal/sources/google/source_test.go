@@ -2,6 +2,7 @@ package google
 
 import (
 	"errors"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,9 +24,11 @@ type mockDriveExporter struct {
 	// Recorded arguments for assertion in tests.
 	lastMaxBytes int64
 
-	// Concurrency probing: when exportDelay > 0, ExportAsString blocks for that
-	// duration so tests can observe peak in-flight calls.
+	// Concurrency probing via timing (exportDelay > 0): ExportAsString sleeps
+	// briefly so goroutines can overlap. For a deterministic alternative use
+	// exportBlock: goroutines block until the channel is closed.
 	exportDelay  time.Duration
+	exportBlock  chan struct{} // when non-nil, block until closed
 	inFlight     atomic.Int64
 	peakInFlight atomic.Int64
 }
@@ -38,32 +41,35 @@ func (m *mockDriveExporter) ListFilesInFolder(_ string, _ time.Time, _ bool, _ d
 	return m.listFiles, m.listErr
 }
 
-func (m *mockDriveExporter) ListSharedWithMe(_ time.Time, _ drive.ListFilesOptions) ([]*drive.DriveFileInfo, error) {
-	return m.sharedFiles, m.sharedErr
-}
-
 func (m *mockDriveExporter) ExportAsString(_ string, _ string, _ bool, maxBytes int64) (string, error) {
 	m.lastMaxBytes = maxBytes
 
-	if m.exportDelay > 0 {
-		current := m.inFlight.Add(1)
-		// Update peak if current exceeds it.
-		for {
-			peak := m.peakInFlight.Load()
-			if current <= peak {
-				break
-			}
-
-			if m.peakInFlight.CompareAndSwap(peak, current) {
-				break
-			}
+	current := m.inFlight.Add(1)
+	// Update peak atomically.
+	for {
+		peak := m.peakInFlight.Load()
+		if current <= peak {
+			break
 		}
 
-		time.Sleep(m.exportDelay)
-		m.inFlight.Add(-1)
+		if m.peakInFlight.CompareAndSwap(peak, current) {
+			break
+		}
 	}
 
+	if m.exportBlock != nil {
+		<-m.exportBlock // block until test releases
+	} else if m.exportDelay > 0 {
+		time.Sleep(m.exportDelay)
+	}
+
+	m.inFlight.Add(-1)
+
 	return m.exportContent, m.exportErr
+}
+
+func (m *mockDriveExporter) ListSharedWithMe(_ time.Time, _ drive.ListFilesOptions) ([]*drive.DriveFileInfo, error) {
+	return m.sharedFiles, m.sharedErr
 }
 
 // newTestGoogleDriveSource creates a GoogleSource wired for Drive with the given mock.
@@ -404,8 +410,9 @@ func TestFetchDrive_ListError(t *testing.T) {
 }
 
 // TestFetchDrive_ParallelExports verifies that MaxConcurrentExports controls real
-// concurrency. Each ExportAsString call blocks briefly so goroutines overlap; the
-// test asserts that peak in-flight calls is >1 and ≤ MaxConcurrentExports.
+// concurrency. Uses a channel barrier so goroutines are held until maxConcurrent
+// are provably in-flight simultaneously, making the assertion deterministic on
+// any scheduler/GOMAXPROCS configuration.
 func TestFetchDrive_ParallelExports(t *testing.T) {
 	const numFiles = 6
 
@@ -420,29 +427,63 @@ func TestFetchDrive_ParallelExports(t *testing.T) {
 		}
 	}
 
+	// exportBlock holds each goroutine until the test releases them.
+	block := make(chan struct{})
 	mock := &mockDriveExporter{
 		listFiles:     files,
 		exportContent: "content",
-		exportDelay:   20 * time.Millisecond, // enough overlap to measure peak
+		exportBlock:   block,
 	}
 	cfg := models.DriveSourceConfig{MaxConcurrentExports: maxConcurrent}
 	src := newTestGoogleDriveSource(mock, cfg)
 
-	items, err := src.fetchDrive(time.Now(), 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Run fetchDrive in a background goroutine.
+	type result struct {
+		items []models.FullItem
+		err   error
 	}
 
-	if len(items) != numFiles {
-		t.Errorf("expected %d items, got %d", numFiles, len(items))
+	done := make(chan result, 1)
+
+	go func() {
+		items, err := src.fetchDrive(time.Now(), 0)
+		done <- result{items, err}
+	}()
+
+	// Wait until maxConcurrent goroutines are blocked at the barrier.
+	// This guarantees they are truly running concurrently.
+	deadline := time.After(5 * time.Second)
+
+	for mock.inFlight.Load() < int64(maxConcurrent) {
+		select {
+		case <-deadline:
+			close(block) // unblock to avoid goroutine leak
+			t.Fatal("timed out waiting for concurrent goroutines")
+		default:
+			runtime.Gosched()
+		}
 	}
 
+	// Record peak while we know maxConcurrent goroutines are in-flight.
 	peak := mock.peakInFlight.Load()
-	if peak <= 1 {
-		t.Errorf("peak in-flight = %d, want >1 (exports should run concurrently)", peak)
+
+	// Release all blocked goroutines.
+	close(block)
+
+	res := <-done
+	if res.err != nil {
+		t.Fatalf("unexpected error: %v", res.err)
 	}
 
-	if peak > maxConcurrent {
+	if len(res.items) != numFiles {
+		t.Errorf("expected %d items, got %d", numFiles, len(res.items))
+	}
+
+	if peak < int64(maxConcurrent) {
+		t.Errorf("peak in-flight = %d, want >=%d (goroutines should be concurrent)", peak, maxConcurrent)
+	}
+
+	if peak > int64(maxConcurrent) {
 		t.Errorf("peak in-flight = %d, exceeds MaxConcurrentExports=%d", peak, maxConcurrent)
 	}
 }
