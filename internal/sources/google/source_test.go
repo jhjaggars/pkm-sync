@@ -21,8 +21,9 @@ type mockDriveExporter struct {
 	exportErr       error
 	configureCalled bool
 
-	// Recorded arguments for assertion in tests.
-	lastMaxBytes int64
+	// lastMaxBytes is written concurrently by parallel export goroutines;
+	// use atomic to avoid a data race under -race.
+	lastMaxBytes atomic.Int64
 
 	// Concurrency probing via timing (exportDelay > 0): ExportAsString sleeps
 	// briefly so goroutines can overlap. For a deterministic alternative use
@@ -31,6 +32,9 @@ type mockDriveExporter struct {
 	exportBlock  chan struct{} // when non-nil, block until closed
 	inFlight     atomic.Int64
 	peakInFlight atomic.Int64
+	// startedCount is incremented after peakInFlight is updated, before blocking.
+	// Tests can wait on startedCount >= N to guarantee N goroutines have updated peak.
+	startedCount atomic.Int64
 }
 
 func (m *mockDriveExporter) Configure(_ models.DriveSourceConfig) {
@@ -42,7 +46,7 @@ func (m *mockDriveExporter) ListFilesInFolder(_ string, _ time.Time, _ bool, _ d
 }
 
 func (m *mockDriveExporter) ExportAsString(_ string, _ string, _ bool, maxBytes int64) (string, error) {
-	m.lastMaxBytes = maxBytes
+	m.lastMaxBytes.Store(maxBytes)
 
 	current := m.inFlight.Add(1)
 	// Update peak atomically.
@@ -56,6 +60,10 @@ func (m *mockDriveExporter) ExportAsString(_ string, _ string, _ bool, maxBytes 
 			break
 		}
 	}
+
+	// Signal that this goroutine has committed its peak update.
+	// Tests waiting for startedCount >= N are guaranteed peak is up-to-date.
+	m.startedCount.Add(1)
 
 	if m.exportBlock != nil {
 		<-m.exportBlock // block until test releases
@@ -263,8 +271,8 @@ func TestConvertDriveFile_MaxBytesForwarded(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if mock.lastMaxBytes != 512 {
-		t.Errorf("ExportAsString received maxBytes=%d, want 512", mock.lastMaxBytes)
+	if mock.lastMaxBytes.Load() != 512 {
+		t.Errorf("ExportAsString received maxBytes=%d, want 512", mock.lastMaxBytes.Load())
 	}
 }
 
@@ -450,11 +458,12 @@ func TestFetchDrive_ParallelExports(t *testing.T) {
 		done <- result{items, err}
 	}()
 
-	// Wait until maxConcurrent goroutines are blocked at the barrier.
-	// This guarantees they are truly running concurrently.
+	// Wait until maxConcurrent goroutines have updated peakInFlight and are
+	// blocked at the barrier. startedCount is incremented after the peak CAS,
+	// so when startedCount >= maxConcurrent the peak read is guaranteed fresh.
 	deadline := time.After(5 * time.Second)
 
-	for mock.inFlight.Load() < int64(maxConcurrent) {
+	for mock.startedCount.Load() < int64(maxConcurrent) {
 		select {
 		case <-deadline:
 			close(block) // unblock to avoid goroutine leak
@@ -464,7 +473,7 @@ func TestFetchDrive_ParallelExports(t *testing.T) {
 		}
 	}
 
-	// Record peak while we know maxConcurrent goroutines are in-flight.
+	// Record peak — all maxConcurrent goroutines have updated it.
 	peak := mock.peakInFlight.Load()
 
 	// Release all blocked goroutines.
