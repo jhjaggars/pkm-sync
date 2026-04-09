@@ -366,5 +366,6 @@ func GetAllContentProcessingTransformers() []interfaces.Transformer {
 		NewThreadGroupingTransformer(),   // Thread consolidation from thread_grouping.go
 		NewAutoTaggingTransformer(),      // Existing example transformer
 		NewFilterTransformer(),           // Existing example transformer
+		NewAIAnalysisTransformer(),       // AI-powered content analysis (disabled until configured)
 	}
 }
