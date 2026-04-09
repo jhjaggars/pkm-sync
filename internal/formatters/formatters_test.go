@@ -16,6 +16,7 @@ func makeItem(id, title, itemType string) models.FullItem {
 	item := models.NewBasicItem(id, title)
 	item.SetItemType(itemType)
 	item.SetCreatedAt(fixedTime)
+
 	return item
 }
 
@@ -130,6 +131,7 @@ func TestTruncateFunction(t *testing.T) {
 	}
 
 	item := makeItem("4", "Hello World", "thread")
+
 	got, err := tf.FormatFilename(item)
 	if err != nil {
 		t.Fatalf("FormatFilename: %v", err)
@@ -147,6 +149,7 @@ func TestFormatDirectory_Empty_WhenNoTemplate(t *testing.T) {
 	}
 
 	item := makeItem("5", "X", "event")
+
 	got, err := tf.FormatDirectory(item)
 	if err != nil {
 		t.Fatalf("FormatDirectory: %v", err)
@@ -200,6 +203,7 @@ func TestBuildRegistry_DuplicateName_LastWins(t *testing.T) {
 	}
 
 	item := makeItem("6", "T", "event")
+
 	got, err := tf.FormatFilename(item)
 	if err != nil {
 		t.Fatalf("FormatFilename: %v", err)
@@ -223,6 +227,7 @@ func TestBuildRegistry_InvalidTemplate_ReturnsError(t *testing.T) {
 
 func TestNilRegistry_Lookup(t *testing.T) {
 	var reg *formatters.Registry
+
 	tf, ok := reg.Lookup("anything")
 
 	if ok || tf != nil {
