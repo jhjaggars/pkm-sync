@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time" //nolint:gci
 
+	"pkm-sync/internal/formatters"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 )
@@ -16,6 +18,11 @@ import (
 type FileSink struct {
 	fmt       formatter
 	outputDir string
+
+	// registry holds compiled template-based formatters (may be nil).
+	registry *formatters.Registry
+	// typeFormatters maps item type (e.g. "event") to a formatter name.
+	typeFormatters map[string]string
 }
 
 // NewFileSink creates a FileSink for the given formatter name and output directory.
@@ -29,6 +36,16 @@ func NewFileSink(formatterName string, outputDir string, config map[string]any) 
 	f.configure(config)
 
 	return &FileSink{fmt: f, outputDir: outputDir}, nil
+}
+
+// WithFormatters attaches a compiled formatter registry and a type-to-name
+// mapping to the sink.  When an item's ItemType matches a key in typeMap the
+// corresponding named formatter in reg is used for directory, filename and
+// content rendering (falling back to the PKM-specific formatter for any field
+// whose template is empty).
+func (s *FileSink) WithFormatters(reg *formatters.Registry, typeMap map[string]string) {
+	s.registry = reg
+	s.typeFormatters = typeMap
 }
 
 // Name returns the name of the underlying formatter.
@@ -48,16 +65,80 @@ func (s *FileSink) Write(_ context.Context, items []models.FullItem) error {
 }
 
 func (s *FileSink) writeItem(item models.FullItem) error {
-	filename := s.fmt.formatFilename(item.GetTitle())
-	filePath := filepath.Join(s.outputDir, dateSubdirForItem(item), filename)
+	dir, filename, content, err := s.renderItem(item)
+	if err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(s.outputDir, dir, filename)
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
 	}
 
-	content := s.fmt.formatContent(item)
-
 	return os.WriteFile(filePath, []byte(content), 0644)
+}
+
+// renderItem returns the (directory, filename, content) triple for an item.
+// It applies a configured template formatter when one is registered for the
+// item's type, falling back to the built-in PKM formatter for any field whose
+// template is empty.
+func (s *FileSink) renderItem(item models.FullItem) (dir, filename, content string, err error) {
+	// Resolve the optional template formatter for this item type.
+	var tf *formatters.TemplateFormatter
+
+	if s.registry != nil && len(s.typeFormatters) > 0 {
+		if fmtName, ok := s.typeFormatters[item.GetItemType()]; ok {
+			tf, _ = s.registry.Lookup(fmtName)
+		}
+	}
+
+	// --- directory ---
+	if tf != nil && tf.HasDirectoryPattern() {
+		dir, err = tf.FormatDirectory(item)
+		if err != nil {
+			return "", "", "", fmt.Errorf("template formatter directory: %w", err)
+		}
+	} else {
+		dir = dateSubdirForItem(item)
+	}
+
+	// --- filename ---
+	if tf != nil && tf.HasFilenamePattern() {
+		filename, err = tf.FormatFilename(item)
+		if err != nil {
+			return "", "", "", fmt.Errorf("template formatter filename: %w", err)
+		}
+		// Ensure the file extension is appended if not already present.
+		if ext := s.fmt.fileExtension(); ext != "" && !hasExtension(filename, ext) {
+			filename += ext
+		}
+	} else {
+		filename = s.fmt.formatFilename(item.GetTitle())
+	}
+
+	// --- content ---
+	if tf != nil && tf.HasContentTemplate() {
+		content, err = tf.FormatContent(item)
+		if err != nil {
+			return "", "", "", fmt.Errorf("template formatter content: %w", err)
+		}
+	} else {
+		content = s.fmt.formatContent(item)
+	}
+
+	return dir, filename, content, nil
+}
+
+// hasExtension reports whether filename already ends with ext (case-insensitive).
+func hasExtension(filename, ext string) bool {
+	if len(filename) < len(ext) {
+		return false
+	}
+
+	suffix := filename[len(filename)-len(ext):]
+
+	return strings.EqualFold(suffix, ext)
 }
 
 // Preview generates a description of what files would be created/modified
@@ -66,9 +147,12 @@ func (s *FileSink) Preview(items []models.FullItem) ([]*interfaces.FilePreview, 
 	previews := make([]*interfaces.FilePreview, 0, len(items))
 
 	for _, item := range items {
-		filename := s.fmt.formatFilename(item.GetTitle())
-		filePath := filepath.Join(s.outputDir, dateSubdirForItem(item), filename)
-		content := s.fmt.formatContent(item)
+		dir, filename, content, err := s.renderItem(item)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render item %s: %w", item.GetID(), err)
+		}
+
+		filePath := filepath.Join(s.outputDir, dir, filename)
 
 		action, existingContent, err := logseqDetermineFileAction(filePath, content)
 		if err != nil {
