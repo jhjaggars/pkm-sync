@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"pkm-sync/internal/resolve"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 )
@@ -26,6 +27,11 @@ type MultiSyncOptions struct {
 	SourceTags   bool
 	TransformCfg models.TransformConfig
 	DryRun       bool
+
+	// ResolveRefs enables cross-source reference resolution between Transform
+	// and Sink phases. Requires the MultiSyncer to have a non-nil resolver.
+	ResolveRefs  bool
+	ResolveDepth int // 0 defaults to 1 inside the resolve engine
 }
 
 // SourceResult records the outcome of fetching a single source.
@@ -58,11 +64,18 @@ type fetchResult struct {
 // and fans out to one or more Sinks.
 type MultiSyncer struct {
 	pipeline interfaces.TransformPipeline
+	resolver *resolve.Engine
 }
 
 // NewMultiSyncer creates a MultiSyncer. pipeline may be nil to skip transformation.
 func NewMultiSyncer(pipeline interfaces.TransformPipeline) *MultiSyncer {
 	return &MultiSyncer{pipeline: pipeline}
+}
+
+// NewMultiSyncerWithResolver creates a MultiSyncer with an optional reference
+// resolver that runs between the Transform and Sink phases.
+func NewMultiSyncerWithResolver(pipeline interfaces.TransformPipeline, resolver *resolve.Engine) *MultiSyncer {
+	return &MultiSyncer{pipeline: pipeline, resolver: resolver}
 }
 
 // SyncAll executes the full Sources → Transform → Sinks pipeline.
@@ -173,6 +186,19 @@ func (m *MultiSyncer) SyncAll(
 
 		fmt.Printf("Transformed to %d items\n", len(transformed))
 		allItems = transformed
+	}
+
+	// --- Phase 2.5: Resolve cross-source references ---
+	if opts.ResolveRefs && m.resolver != nil {
+		resolved, err := m.resolver.Resolve(ctx, allItems, resolve.Config{
+			MaxDepth: opts.ResolveDepth,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("reference resolution failed: %w", err)
+		}
+
+		fmt.Printf("After resolution: %d items (was %d)\n", len(resolved), len(allItems))
+		allItems = resolved
 	}
 
 	result.Items = allItems

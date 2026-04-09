@@ -132,6 +132,39 @@ func (s *JiraSource) Fetch(since time.Time, limit int) ([]models.FullItem, error
 	return allItems, nil
 }
 
+// FetchIssue retrieves a single Jira issue by key (e.g. "PROJ-123") and converts
+// it to a FullItem. Used by the cross-source reference resolver.
+func (s *JiraSource) FetchIssue(ctx context.Context, issueKey string) (models.FullItem, error) {
+	path := fmt.Sprintf("/issue/%s?fields=*all", url.PathEscape(issueKey))
+
+	res, err := s.client.Get(ctx, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("jira: fetch issue %s: %w", issueKey, err)
+	}
+
+	if res == nil {
+		return nil, fmt.Errorf("jira: empty response for issue %s", issueKey)
+	}
+
+	defer res.Body.Close() //nolint:errcheck
+
+	if res.StatusCode != http.StatusOK {
+		var errs jiraclient.Errors
+
+		_ = json.NewDecoder(res.Body).Decode(&errs)
+
+		return nil, fmt.Errorf("jira: issue %s returned %s: %s", issueKey, res.Status, errs.String())
+	}
+
+	var issue jiraclient.Issue
+
+	if err := json.NewDecoder(res.Body).Decode(&issue); err != nil {
+		return nil, fmt.Errorf("jira: decode issue %s: %w", issueKey, err)
+	}
+
+	return issueToItem(&issue, s.serverURL, s.cfg.IncludeComments), nil
+}
+
 // searchWithAllFields performs a search with fields=*all to retrieve all issue fields.
 func (s *JiraSource) searchWithAllFields(jql string, from, limit uint) (*jiraclient.SearchResult, error) {
 	path := fmt.Sprintf(
