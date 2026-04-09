@@ -23,7 +23,6 @@ const (
 	metaKeyAISummary     = "ai_summary"
 	metaKeyAIPriority    = "ai_priority_score"
 	metaKeyAIActionItems = "ai_action_items"
-	metaKeyAITags        = "ai_tags"
 
 	defaultRetryAttempts = 3
 	defaultRetryDelay    = time.Second
@@ -218,7 +217,6 @@ type AIAnalysisTransformer struct {
 	batchSize     int
 	onFailure     string // "log_and_continue", "fail_fast", "skip_item"
 	enabled       bool
-	config        map[string]interface{}
 }
 
 // NewAIAnalysisTransformer creates an AIAnalysisTransformer with no backend configured.
@@ -231,7 +229,6 @@ func NewAIAnalysisTransformer() *AIAnalysisTransformer {
 		batchSize:     defaultBatchSize,
 		onFailure:     errorStrategyLogAndContinue,
 		enabled:       false,
-		config:        make(map[string]interface{}),
 	}
 }
 
@@ -255,9 +252,10 @@ func (t *AIAnalysisTransformer) Name() string {
 //	retry_delay: string duration
 //	batch_size: int
 //	on_failure: "log_and_continue" | "fail_fast" | "skip_item"
+//	  - log_and_continue: keep original item unmodified on failure (default)
+//	  - fail_fast: abort the entire Transform call on first failure
+//	  - skip_item: skip the entire batch containing the failed item (not just the individual item)
 func (t *AIAnalysisTransformer) Configure(config map[string]interface{}) error {
-	t.config = config
-
 	backendType, _ := config["backend"].(string)
 	if backendType == "" {
 		// No backend configured — transformer is a no-op (graceful degradation).
