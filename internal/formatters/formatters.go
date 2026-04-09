@@ -2,8 +2,6 @@
 // PKM sink outputs.  Each formatter is defined in the configuration file and
 // referenced by name from a target's Formatters map.
 //
-// Template data
-//
 // All three template kinds (directory, filename, content) receive the same
 // [ItemData] struct as their dot value.  The following template functions are
 // available:
@@ -76,6 +74,7 @@ func templateFuncs() template.FuncMap {
 			if len(runes) <= n {
 				return s
 			}
+
 			return string(runes[:n])
 		},
 	}
@@ -85,11 +84,11 @@ func templateFuncs() template.FuncMap {
 // each for the directory path, the filename (without extension), and the full
 // file content.
 type TemplateFormatter struct {
-	name      string
-	itemType  string
-	dirTmpl   *template.Template // may be nil when DirectoryPattern is empty
-	fileTmpl  *template.Template // may be nil when FilenamePattern is empty
-	contTmpl  *template.Template // may be nil when ContentTemplate is empty
+	name     string
+	itemType string
+	dirTmpl  *template.Template // may be nil when DirectoryPattern is empty
+	fileTmpl *template.Template // may be nil when FilenamePattern is empty
+	contTmpl *template.Template // may be nil when ContentTemplate is empty
 }
 
 // New compiles a TemplateFormatter from a [models.FormatterConfig].
@@ -107,6 +106,7 @@ func New(cfg models.FormatterConfig) (*TemplateFormatter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("formatter %q: directory_pattern: %w", cfg.Name, err)
 		}
+
 		tf.dirTmpl = t
 	}
 
@@ -115,6 +115,7 @@ func New(cfg models.FormatterConfig) (*TemplateFormatter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("formatter %q: filename_pattern: %w", cfg.Name, err)
 		}
+
 		tf.fileTmpl = t
 	}
 
@@ -123,6 +124,7 @@ func New(cfg models.FormatterConfig) (*TemplateFormatter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("formatter %q: content_template: %w", cfg.Name, err)
 		}
+
 		tf.contTmpl = t
 	}
 
@@ -150,6 +152,7 @@ func (tf *TemplateFormatter) FormatDirectory(item models.FullItem) (string, erro
 	if tf.dirTmpl == nil {
 		return "", nil
 	}
+
 	return tf.render(tf.dirTmpl, item)
 }
 
@@ -159,6 +162,7 @@ func (tf *TemplateFormatter) FormatFilename(item models.FullItem) (string, error
 	if tf.fileTmpl == nil {
 		return "", nil
 	}
+
 	return tf.render(tf.fileTmpl, item)
 }
 
@@ -168,6 +172,7 @@ func (tf *TemplateFormatter) FormatContent(item models.FullItem) (string, error)
 	if tf.contTmpl == nil {
 		return "", nil
 	}
+
 	return tf.render(tf.contTmpl, item)
 }
 

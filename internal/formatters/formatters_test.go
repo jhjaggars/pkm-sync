@@ -68,6 +68,7 @@ func TestFormatDirectory(t *testing.T) {
 	}
 
 	item := makeItem("1", "Standup", "event")
+
 	got, err := tf.FormatDirectory(item)
 	if err != nil {
 		t.Fatalf("FormatDirectory: %v", err)
@@ -88,6 +89,7 @@ func TestFormatFilename(t *testing.T) {
 	}
 
 	item := makeItem("2", "Team Meeting", "event")
+
 	got, err := tf.FormatFilename(item)
 	if err != nil {
 		t.Fatalf("FormatFilename: %v", err)
@@ -108,6 +110,7 @@ Date: {{.CreatedAt | formatDate "January 2, 2006"}}`))
 	}
 
 	item := makeItem("3", "Sprint Review", "event")
+
 	got, err := tf.FormatContent(item)
 	if err != nil {
 		t.Fatalf("FormatContent: %v", err)
