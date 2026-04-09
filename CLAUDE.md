@@ -65,7 +65,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - **Embeddings** (`internal/embeddings/`) — pluggable embedding providers (Ollama, OpenAI)
 - **Keystore** (`internal/keystore/`) — secure credential storage using system keyring or encrypted file fallback
 - **Configure** (`internal/configure/`) — shared TUI configuration logic and per-source providers for the interactive `configure` command
-- **Utils** (`internal/utils/`) — shared filename sanitization helpers (slug generation, space removal)
+- **Utils** (`internal/utils/`) — shared filename sanitization helpers (path traversal prevention, slug generation, safe character replacement)
 
 ### Configuration System (`internal/config/config.go`)
 - **Multi-source configuration** supporting enabled sources array
