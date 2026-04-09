@@ -309,6 +309,10 @@ func extractFileIDFromDocsURL(url string) string {
 			if idx := strings.Index(fileID, "?"); idx != -1 {
 				fileID = fileID[:idx]
 			}
+			// Remove any fragments
+			if idx := strings.Index(fileID, "#"); idx != -1 {
+				fileID = fileID[:idx]
+			}
 
 			return fileID
 		}
@@ -326,6 +330,10 @@ func extractFileIDFromDriveURL(url string) string {
 			fileID := parts[i+1]
 			// Remove any query parameters
 			if idx := strings.Index(fileID, "?"); idx != -1 {
+				fileID = fileID[:idx]
+			}
+			// Remove any fragments
+			if idx := strings.Index(fileID, "#"); idx != -1 {
 				fileID = fileID[:idx]
 			}
 
@@ -381,6 +389,10 @@ func extractFileIDFromOpenURL(url string) string {
 	fileID := parts[1]
 	// Remove any trailing parameters
 	if idx := strings.Index(fileID, "&"); idx != -1 {
+		fileID = fileID[:idx]
+	}
+	// Remove any fragments
+	if idx := strings.Index(fileID, "#"); idx != -1 {
 		fileID = fileID[:idx]
 	}
 
@@ -833,4 +845,83 @@ func convertFileInfo(f *drive.File) *DriveFileInfo {
 	}
 
 	return info
+}
+
+// GetComments retrieves all comments for a Google Drive file.
+func (s *Service) GetComments(fileID string) ([]CommentData, error) {
+	const fields = "nextPageToken,comments(id,content,author(displayName),createdTime,resolved,quotedFileContent," +
+		"replies(content,author(displayName),createdTime))"
+
+	var comments []CommentData
+
+	pageToken := ""
+	commentNumber := 1
+
+	for {
+		req := s.client.Comments.List(fileID).Fields(fields).PageSize(100)
+
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
+		}
+
+		commentList, err := req.Do()
+		if err != nil {
+			return nil, fmt.Errorf("unable to retrieve comments: %w", err)
+		}
+
+		for _, c := range commentList.Comments {
+			comment := CommentData{
+				ID:            c.Id,
+				Content:       c.Content,
+				Resolved:      c.Resolved,
+				CommentNumber: commentNumber,
+			}
+			commentNumber++
+
+			if c.Author != nil {
+				comment.Author = c.Author.DisplayName
+			}
+
+			if c.QuotedFileContent != nil {
+				comment.QuotedText = c.QuotedFileContent.Value
+			}
+
+			if c.CreatedTime != "" {
+				if t, err := time.Parse(time.RFC3339, c.CreatedTime); err == nil {
+					comment.CreatedTime = t.Format("2006-01-02 15:04")
+				}
+			}
+
+			if len(c.Replies) > 0 {
+				comment.Replies = make([]ReplyData, 0, len(c.Replies))
+				for _, r := range c.Replies {
+					reply := ReplyData{
+						Content: r.Content,
+					}
+
+					if r.Author != nil {
+						reply.Author = r.Author.DisplayName
+					}
+
+					if r.CreatedTime != "" {
+						if t, err := time.Parse(time.RFC3339, r.CreatedTime); err == nil {
+							reply.CreatedTime = t.Format("2006-01-02 15:04")
+						}
+					}
+
+					comment.Replies = append(comment.Replies, reply)
+				}
+			}
+
+			comments = append(comments, comment)
+		}
+
+		if commentList.NextPageToken == "" {
+			break
+		}
+
+		pageToken = commentList.NextPageToken
+	}
+
+	return comments, nil
 }

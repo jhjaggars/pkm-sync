@@ -13,7 +13,8 @@ import (
 )
 
 var (
-	fetchFormat string
+	fetchFormat   string
+	fetchComments bool
 )
 
 var driveFetchCmd = &cobra.Command{
@@ -34,9 +35,11 @@ Output formats:
   - html : HTML
   - csv  : CSV (for spreadsheets only)
 
+Use --comments to append document comments as markdown footnotes (md format only).
+
 Examples:
   pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit"
-  pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md
+  pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md --comments
   pkm-sync drive fetch "https://docs.google.com/spreadsheets/d/xyz789/edit" --format csv`,
 	Args: cobra.ExactArgs(1),
 	RunE: runDriveFetchCommand,
@@ -45,6 +48,7 @@ Examples:
 func init() {
 	driveCmd.AddCommand(driveFetchCmd)
 	driveFetchCmd.Flags().StringVar(&fetchFormat, "format", "txt", "Output format (txt, md, html, csv)")
+	driveFetchCmd.Flags().BoolVar(&fetchComments, "comments", false, "Append document comments as markdown footnotes (md format only)")
 }
 
 func runDriveFetchCommand(cmd *cobra.Command, args []string) error {
@@ -90,25 +94,53 @@ func runDriveFetchCommand(cmd *cobra.Command, args []string) error {
 		_ = content.Close()
 	}()
 
-	// If format is markdown, convert HTML to markdown
-	if fetchFormat == "md" {
-		htmlBytes, err := io.ReadAll(content)
-		if err != nil {
-			return fmt.Errorf("failed to read HTML content: %w", err)
-		}
+	// Warn if --comments used with non-markdown format
+	if fetchComments && fetchFormat != "md" {
+		fmt.Fprintln(os.Stderr, "Warning: --comments is only supported with --format md, ignoring")
+	}
 
-		markdown, err := mdconverter.ConvertString(string(htmlBytes))
-		if err != nil {
-			return fmt.Errorf("failed to convert HTML to markdown: %w", err)
-		}
-
-		_, err = fmt.Fprint(os.Stdout, markdown)
+	// Non-markdown formats: write content directly to stdout
+	if fetchFormat != "md" {
+		_, err = io.Copy(os.Stdout, content)
 
 		return err
 	}
 
-	// Otherwise, write content directly to stdout
-	_, err = io.Copy(os.Stdout, content)
+	// Markdown: convert HTML to markdown
+	htmlBytes, err := io.ReadAll(content)
+	if err != nil {
+		return fmt.Errorf("failed to read HTML content: %w", err)
+	}
+
+	markdown, err := mdconverter.ConvertString(string(htmlBytes))
+	if err != nil {
+		return fmt.Errorf("failed to convert HTML to markdown: %w", err)
+	}
+
+	if fetchComments {
+		markdown, err = appendComments(driveService, fileID, markdown)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = fmt.Fprint(os.Stdout, markdown)
 
 	return err
+}
+
+func appendComments(driveService *drive.Service, fileID, markdown string) (string, error) {
+	comments, err := driveService.GetComments(fileID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch comments: %w", err)
+	}
+
+	if len(comments) == 0 {
+		return markdown, nil
+	}
+
+	markdown = drive.InsertCommentMarkers(markdown, comments)
+	markdown += "\n\n" + drive.FormatCommentsAsFootnotes(comments)
+
+	return markdown, nil
 }
