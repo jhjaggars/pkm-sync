@@ -8,6 +8,13 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// Error strategy constants used across the transform package.
+const (
+	errorStrategyFailFast       = "fail_fast"
+	errorStrategyLogAndContinue = "log_and_continue"
+	errorStrategySkipItem       = "skip_item"
+)
+
 // DefaultTransformPipeline implements the TransformPipeline interface using FullItem.
 type DefaultTransformPipeline struct {
 	transformers        []interfaces.Transformer
@@ -95,7 +102,7 @@ func (p *DefaultTransformPipeline) Transform(items []models.FullItem) ([]models.
 				return nil, err
 			}
 			// currentItems remains unchanged for log_and_continue, or becomes empty for skip_item
-			if p.config.ErrorStrategy == "skip_item" {
+			if p.config.ErrorStrategy == errorStrategySkipItem {
 				currentItems = []models.FullItem{}
 			}
 		} else {
@@ -130,11 +137,11 @@ func (p *DefaultTransformPipeline) handleTransformerError(
 	err error,
 ) error {
 	switch p.config.ErrorStrategy {
-	case "fail_fast":
+	case errorStrategyFailFast:
 		return fmt.Errorf("transformer '%s' failed: %w", transformer.Name(), err)
-	case "log_and_continue":
+	case errorStrategyLogAndContinue:
 		p.logTransformerError(transformer, items, err, "Continuing with previous items")
-	case "skip_item":
+	case errorStrategySkipItem:
 		p.logTransformerError(transformer, items, err, "skipping this batch")
 	default:
 		return fmt.Errorf("unknown error strategy '%s'", p.config.ErrorStrategy)

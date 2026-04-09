@@ -180,5 +180,6 @@ func GetAllContentProcessingTransformers() []interfaces.Transformer {
 		NewEnhancedAutoTaggingTransformer(), // Pattern/regex tagging from auto_tagging.go
 		NewContentFilterTransformer(),       // Include/exclude filtering from content_filter.go
 		NewFilterTransformer(),              // Legacy filter transformer
+		NewAIAnalysisTransformer(),          // AI-powered content analysis (disabled until configured)
 	}
 }

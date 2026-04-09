@@ -263,17 +263,17 @@ func TestFilterTransformerInvalidConfig(t *testing.T) {
 func TestGetAllExampleTransformers(t *testing.T) {
 	// GetAllExampleTransformers returns all registered transformers
 	// (content_cleanup, link_extraction, signature_removal, thread_grouping,
-	// auto_tagging, content_filter, filter).
+	// auto_tagging, content_filter, filter, ai_analysis).
 	transformers := GetAllExampleTransformers()
-	if len(transformers) != 7 {
-		t.Errorf("Expected 7 transformers, got %d", len(transformers))
+	if len(transformers) != 8 {
+		t.Errorf("Expected 8 transformers, got %d", len(transformers))
 	}
 }
 
 func TestGetAllContentProcessingTransformers(t *testing.T) {
 	transformers := GetAllContentProcessingTransformers()
-	if len(transformers) != 7 {
-		t.Errorf("Expected 7 content processing transformers, got %d", len(transformers))
+	if len(transformers) != 8 {
+		t.Errorf("Expected 8 content processing transformers, got %d", len(transformers))
 	}
 }
 
