@@ -103,6 +103,7 @@ func TestEngine_DeduplicatesURLs(t *testing.T) {
 		canHandle: func(url string) bool { return url == targetURL },
 		resolve: func(_ context.Context, url string) (models.FullItem, error) {
 			callCount.Add(1)
+
 			return makeResolvedItem("resolved-1", url), nil
 		},
 	}

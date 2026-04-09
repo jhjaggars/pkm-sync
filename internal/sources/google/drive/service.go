@@ -61,6 +61,7 @@ func (s *Service) rateLimit() error {
 
 	if s.maxRequests > 0 && s.requestCount >= s.maxRequests {
 		s.mu.Unlock()
+
 		return fmt.Errorf("drive API request cap (%d) reached", s.maxRequests)
 	}
 
@@ -132,6 +133,7 @@ func (s *Service) executeWithRetry(fn func() (interface{}, error)) (interface{},
 
 		if isDriveTemporaryError(err) && attempt < maxRetries-1 {
 			slog.Info("Drive temporary error, retrying", "error", err)
+
 			continue
 		}
 

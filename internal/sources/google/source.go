@@ -413,6 +413,7 @@ func (g *GoogleSource) fetchDrive(since time.Time, limit int) ([]models.FullItem
 
 	// Collect successful items and log a summary of failures.
 	items := make([]models.FullItem, 0, len(results))
+
 	var failureCount int
 
 	for _, r := range results {

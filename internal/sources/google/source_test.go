@@ -408,6 +408,7 @@ func TestFetchDrive_ListError(t *testing.T) {
 // test asserts that peak in-flight calls is >1 and ≤ MaxConcurrentExports.
 func TestFetchDrive_ParallelExports(t *testing.T) {
 	const numFiles = 6
+
 	const maxConcurrent = 3
 
 	files := make([]*drive.DriveFileInfo, numFiles)
