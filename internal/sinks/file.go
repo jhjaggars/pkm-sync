@@ -3,6 +3,7 @@ package sinks
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,15 @@ func (s *FileSink) renderItem(item models.FullItem) (dir, filename, content stri
 
 	if s.registry != nil && len(s.typeFormatters) > 0 {
 		if fmtName, ok := s.typeFormatters[item.GetItemType()]; ok {
-			tf, _ = s.registry.Lookup(fmtName)
+			var found bool
+
+			tf, found = s.registry.Lookup(fmtName)
+			if !found {
+				slog.Warn("configured formatter not found; using default",
+					"formatter", fmtName,
+					"item_type", item.GetItemType(),
+				)
+			}
 		}
 	}
 

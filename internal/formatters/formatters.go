@@ -14,6 +14,7 @@ package formatters
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
 	"time"
@@ -70,6 +71,10 @@ func templateFuncs() template.FuncMap {
 		// truncate limits a string to at most n runes.
 		// Usage: {{.Title | truncate 50}}
 		"truncate": func(n int, s string) string {
+			if n <= 0 {
+				return ""
+			}
+
 			runes := []rune(s)
 			if len(runes) <= n {
 				return s
@@ -201,6 +206,10 @@ func BuildRegistry(cfgs []models.FormatterConfig) (*Registry, error) {
 		tf, err := New(cfg)
 		if err != nil {
 			return nil, err
+		}
+
+		if _, exists := r.byName[cfg.Name]; exists {
+			slog.Warn("duplicate formatter name; replacing previous entry", "name", cfg.Name)
 		}
 
 		r.byName[cfg.Name] = tf
