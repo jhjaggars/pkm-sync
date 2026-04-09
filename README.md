@@ -30,9 +30,9 @@ pkm-sync uses a **Sources → Transformers → Sinks** pipeline:
 3. **Sinks** write items to a PKM target (Obsidian/Logseq files) or a vector database
 
 ```
-Gmail ──┐
-Drive ──┼──► Transformers ──► FileSink (Obsidian / Logseq)
-Drive ──┘                 └──► VectorSink (semantic search)
+Gmail    ──┐
+Calendar ──┼──► Transformers ──► Files (Obsidian / Logseq)
+Drive    ──┘                 └──► Vector DB (semantic search)
 ```
 
 The primary entry point is `pkm-sync sync`, which runs all enabled sources through the full pipeline in one shot.
@@ -217,6 +217,21 @@ Flags: same as `sync`
 
 ---
 
+### `servicenow` — ServiceNow sync
+
+Sync ServiceNow tickets (RITMs, incidents, etc.) to PKM files.
+
+```bash
+pkm-sync servicenow --source snow_work
+pkm-sync servicenow --source snow_work --since 7d
+pkm-sync servicenow --source snow_work --dry-run
+pkm-sync servicenow auth --instance https://mycompany.service-now.com   # Authenticate
+```
+
+Flags: `--source`, `--since`, `--limit` (default 1000), `--dry-run`
+
+---
+
 ### `configure` — interactive source configuration
 
 Connects to a source's API and presents a multi-select TUI to pick what to sync.
@@ -260,6 +275,7 @@ Tests connectivity to Google Calendar, Drive, and Gmail. Provides clear error me
 | Google Drive | Fully implemented — Docs, Sheets, Slides |
 | Slack | Fully implemented — bearer token auth, channel groups, threads, DMs |
 | Jira | Fully implemented — JQL queries, comments, bearer token auth |
+| ServiceNow | Fully implemented — RITMs, incidents, bearer token auth |
 
 | Target | Format |
 |--------|--------|
@@ -319,38 +335,7 @@ The app opens your browser automatically for OAuth consent. The token is saved i
 ### Getting help
 Run `pkm-sync setup` to diagnose authentication issues.
 
-## Architecture
-
-### Project structure
-
-```
-pkm-sync/
-├── cmd/                 # CLI entry points (sync, gmail, drive, calendar, index, search, …)
-├── internal/
-│   ├── config/          # Config loading and management
-│   ├── sinks/           # FileSink (file export) + VectorSink (semantic search)
-│   ├── sources/
-│   │   └── google/      # Google Calendar, Gmail, Drive source implementations
-│   ├── sync/            # MultiSyncer orchestrator
-│   ├── targets/
-│   │   ├── obsidian/    # Obsidian-specific formatting
-│   │   └── logseq/      # Logseq-specific formatting
-│   └── transform/       # Transformer pipeline (cleanup, tagging, filtering, …)
-└── pkg/
-    ├── interfaces/      # Source, Target, Sink, Transformer, Syncer interfaces
-    └── models/          # Universal data models (BasicItem, Thread, …)
-```
-
-### Extensibility
-
-- **New Sources**: implement the `Source` interface
-- **New Targets**: implement the `Target` interface
-- **New Sinks**: implement the `Sink` interface (file, vector DB, webhooks, …)
-- **New Transformers**: implement the `Transformer` interface
-
 ## Documentation
 
-- **[README.md](./README.md)** — This file
 - **[CONFIGURATION.md](./CONFIGURATION.md)** — Complete configuration reference
-- **[CLAUDE.md](./CLAUDE.md)** — Development guide for Claude Code
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Development workflow and AI agent coordination
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Development workflow
