@@ -404,6 +404,10 @@ type JiraSourceConfig struct {
 	IncludeComments    bool `json:"include_comments"    yaml:"include_comments"`
 	IncludeHistory     bool `json:"include_history"     yaml:"include_history"`
 	IncludeAttachments bool `json:"include_attachments" yaml:"include_attachments"`
+
+	// Comment filtering — regex patterns to exclude automated/noisy comments.
+	// A comment is excluded if its body matches any pattern.
+	CommentExcludePatterns []string `json:"comment_exclude_patterns" yaml:"comment_exclude_patterns"`
 }
 
 // ServiceNowSourceConfig defines configuration for a ServiceNow source.

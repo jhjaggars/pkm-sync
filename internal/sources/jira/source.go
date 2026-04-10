@@ -99,7 +99,7 @@ func (s *JiraSource) Fetch(since time.Time, limit int) ([]models.FullItem, error
 
 	var allItems []models.FullItem
 
-	var from uint
+	var nextPageToken string
 
 	for {
 		remaining := limit - len(allItems)
@@ -112,21 +112,21 @@ func (s *JiraSource) Fetch(since time.Time, limit int) ([]models.FullItem, error
 			batch = uint(remaining)
 		}
 
-		result, err := s.searchWithAllFields(jql, from, batch)
+		result, err := s.searchWithAllFields(jql, batch, nextPageToken)
 		if err != nil {
 			return nil, fmt.Errorf("jira search failed: %w", err)
 		}
 
 		for _, issue := range result.Issues {
-			item := issueToItem(issue, s.serverURL, s.cfg.IncludeComments)
+			item := issueToItem(issue, s.serverURL, s.cfg)
 			allItems = append(allItems, item)
 		}
 
-		if uint(len(result.Issues)) < batch {
+		if result.IsLast || len(result.Issues) == 0 {
 			break
 		}
 
-		from += uint(len(result.Issues))
+		nextPageToken = result.NextPageToken
 	}
 
 	return allItems, nil
@@ -162,15 +162,20 @@ func (s *JiraSource) FetchIssue(ctx context.Context, issueKey string) (models.Fu
 		return nil, fmt.Errorf("jira: decode issue %s: %w", issueKey, err)
 	}
 
-	return issueToItem(&issue, s.serverURL, s.cfg.IncludeComments), nil
+	return issueToItem(&issue, s.serverURL, s.cfg), nil
 }
 
 // searchWithAllFields performs a search with fields=*all to retrieve all issue fields.
-func (s *JiraSource) searchWithAllFields(jql string, from, limit uint) (*jiraclient.SearchResult, error) {
+// Uses cursor-based pagination via nextPageToken (JIRA v3 /search/jql API).
+func (s *JiraSource) searchWithAllFields(jql string, limit uint, pageToken string) (*jiraclient.SearchResult, error) {
 	path := fmt.Sprintf(
-		"/search/jql?jql=%s&startAt=%d&maxResults=%d&fields=*all",
-		url.QueryEscape(jql), from, limit,
+		"/search/jql?jql=%s&maxResults=%d&fields=*all",
+		url.QueryEscape(jql), limit,
 	)
+
+	if pageToken != "" {
+		path += "&nextPageToken=" + url.QueryEscape(pageToken)
+	}
 
 	res, err := s.client.Get(context.Background(), path, nil)
 	if err != nil {

@@ -115,7 +115,7 @@ func makeTestIssue() *jiraclient.Issue {
 
 func TestIssueToItem_BasicFields(t *testing.T) {
 	issue := makeTestIssue()
-	item := issueToItem(issue, "https://issues.example.com", false)
+	item := issueToItem(issue, "https://issues.example.com", models.JiraSourceConfig{})
 
 	assert.Equal(t, "jira_PROJ-123", item.GetID())
 	assert.Equal(t, "PROJ-123", item.GetTitle()) // key used as title → PROJ-123.md filename
@@ -147,7 +147,7 @@ func TestIssueToItem_BasicFields(t *testing.T) {
 
 func TestIssueToItem_Timestamps(t *testing.T) {
 	issue := makeTestIssue()
-	item := issueToItem(issue, "", false)
+	item := issueToItem(issue, "", models.JiraSourceConfig{})
 
 	assert.Equal(t, 2024, item.GetCreatedAt().Year())
 	assert.Equal(t, time.January, item.GetCreatedAt().Month())
@@ -174,7 +174,7 @@ func TestIssueToItem_WithComments(t *testing.T) {
 		},
 	}
 
-	item := issueToItem(issue, "", true)
+	item := issueToItem(issue, "", models.JiraSourceConfig{IncludeComments: true})
 	content := item.GetContent()
 
 	assert.Contains(t, content, "Users cannot log in after upgrade")
@@ -200,7 +200,7 @@ func TestIssueToItem_CommentsDisabled(t *testing.T) {
 		},
 	}
 
-	item := issueToItem(issue, "", false)
+	item := issueToItem(issue, "", models.JiraSourceConfig{})
 	content := item.GetContent()
 
 	assert.Equal(t, "Users cannot log in after upgrade", content)

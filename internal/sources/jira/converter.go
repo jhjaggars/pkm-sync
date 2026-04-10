@@ -3,6 +3,8 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,10 +15,27 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// compileExcludePatterns compiles regex patterns, logging warnings for invalid ones.
+func compileExcludePatterns(patterns []string) []*regexp.Regexp {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+
+	for _, p := range patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			slog.Warn("Invalid comment_exclude_pattern, skipping", "pattern", p, "error", err)
+			continue
+		}
+
+		compiled = append(compiled, re)
+	}
+
+	return compiled
+}
+
 // issueToItem converts a Jira issue to a BasicItem.
 // Title is set to the issue key (e.g. "PROJ-123") so the output filename is "PROJ-123.md",
 // matching the standard Obsidian Jira vault convention.
-func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool) models.FullItem {
+func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourceConfig) models.FullItem {
 	item := &models.BasicItem{
 		ID:         "jira_" + issue.Key,
 		Title:      issue.Key,
@@ -35,29 +54,43 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 	desc := descriptionToMarkdown(issue.Fields.Description)
 	content := desc
 
-	// Append comments section when requested.
-	if includeComments && issue.Fields.Comment.Total > 0 {
+	// Append comments section when requested, filtering out automated noise.
+	if cfg.IncludeComments && issue.Fields.Comment.Total > 0 {
+		excludePatterns := compileExcludePatterns(cfg.CommentExcludePatterns)
+
 		var sb strings.Builder
-
-		if content != "" {
-			sb.WriteString(content)
-			sb.WriteString("\n\n")
-		}
-
-		sb.WriteString("## Comments\n\n")
+		hasComments := false
 
 		for _, c := range issue.Fields.Comment.Comments {
+			body := descriptionToMarkdown(c.Body)
+			if matchesAny(body, excludePatterns) {
+				continue
+			}
+
+			if !hasComments {
+				if content != "" {
+					sb.WriteString(content)
+					sb.WriteString("\n\n")
+				}
+
+				sb.WriteString("## Comments\n\n")
+
+				hasComments = true
+			}
+
 			authorName := c.Author.DisplayName
 			if authorName == "" {
 				authorName = c.Author.Name
 			}
 
 			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", authorName, c.Created))
-			sb.WriteString(descriptionToMarkdown(c.Body))
+			sb.WriteString(body)
 			sb.WriteString("\n\n")
 		}
 
-		content = sb.String()
+		if hasComments {
+			content = sb.String()
+		}
 	}
 
 	item.Content = content
@@ -206,6 +239,17 @@ func collectContributors(issue *jiraclient.Issue) []string {
 	return contributors
 }
 
+// matchesAny returns true if the text matches any of the compiled patterns.
+func matchesAny(text string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(text) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // sanitizeTag converts a string to a valid Obsidian nested tag segment.
 // Replaces spaces with hyphens and lowercases.
 func sanitizeTag(s string) string {
@@ -234,11 +278,26 @@ func descriptionToMarkdown(desc any) string {
 	var adfDoc adf.ADF
 	if err := json.Unmarshal(data, &adfDoc); err == nil && adfDoc.Version > 0 {
 		translator := adf.NewTranslator(&adfDoc, adf.NewMarkdownTranslator())
-		return translator.Translate()
+		result := translator.Translate()
+		return fixInlineCards(result)
 	}
 
 	// Fallback for unexpected types.
 	return string(data)
+}
+
+// inlineCardPattern matches the jira-cli ADF translator's inlineCard output:
+//
+//	📍 https://redhat.atlassian.net/browse/KEY-123#icft=KEY-123
+//
+// and converts it to a markdown link: [KEY-123](url).
+var inlineCardPattern = regexp.MustCompile(
+	`📍\s*(https://[^\s]+/browse/([A-Z]+-\d+))#icft=[A-Z]+-\d+`,
+)
+
+// fixInlineCards replaces raw inlineCard artifacts with proper markdown links.
+func fixInlineCards(text string) string {
+	return inlineCardPattern.ReplaceAllString(text, "[$2]($1)")
 }
 
 // parseJiraTime parses a Jira timestamp string trying both RFC3339 formats.
