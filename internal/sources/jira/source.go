@@ -242,7 +242,9 @@ func (s *JiraSource) FetchIssue(ctx context.Context, issueKey string) (models.Fu
 
 // searchCloudWithAllFields performs a v3 search with fields=*all.
 // Uses cursor-based pagination via nextPageToken (Cloud /search/jql API).
-func (s *JiraSource) searchCloudWithAllFields(jql string, limit uint, pageToken string) (*jiraclient.SearchResult, error) {
+func (s *JiraSource) searchCloudWithAllFields(
+	jql string, limit uint, pageToken string,
+) (*jiraclient.SearchResult, error) {
 	path := fmt.Sprintf(
 		"/search/jql?jql=%s&maxResults=%d&fields=*all",
 		url.QueryEscape(jql), limit,
@@ -254,7 +256,7 @@ func (s *JiraSource) searchCloudWithAllFields(jql string, limit uint, pageToken 
 
 	res, err := s.client.Get(context.Background(), path, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("jira cloud search: %w", err)
 	}
 
 	return decodeSearchResult(res)
@@ -263,6 +265,7 @@ func (s *JiraSource) searchCloudWithAllFields(jql string, limit uint, pageToken 
 // searchV2Result extends SearchResult with v2-specific offset pagination fields.
 type searchV2Result struct {
 	jiraclient.SearchResult
+
 	StartAt    int `json:"startAt"`
 	MaxResults int `json:"maxResults"`
 	Total      int `json:"total"`
@@ -278,7 +281,7 @@ func (s *JiraSource) searchLocalWithAllFields(jql string, startAt, limit uint) (
 
 	res, err := s.client.GetV2(context.Background(), path, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("jira local search: %w", err)
 	}
 
 	if res == nil {

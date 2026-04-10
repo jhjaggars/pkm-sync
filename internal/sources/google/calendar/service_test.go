@@ -593,6 +593,7 @@ func TestService_ConvertToModel_MyResponseStatus(t *testing.T) {
 			if model.MyResponseStatus != tt.wantResponseStatus {
 				t.Errorf("MyResponseStatus = %q, want %q", model.MyResponseStatus, tt.wantResponseStatus)
 			}
+
 			if len(model.Attendees) != tt.wantAttendeeCount {
 				t.Errorf("Attendee count = %d, want %d", len(model.Attendees), tt.wantAttendeeCount)
 			}

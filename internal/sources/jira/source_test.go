@@ -127,9 +127,9 @@ func TestIssueToItem_BasicFields(t *testing.T) {
 	tags := item.GetTags()
 	assert.Contains(t, tags, "backend")
 	assert.Contains(t, tags, "critical")
-	assert.Contains(t, tags, "type/bug")
-	assert.Contains(t, tags, "status/in-progress")
-	assert.Contains(t, tags, "priority/high")
+	assert.Contains(t, tags, "type:bug")
+	assert.Contains(t, tags, "status:in-progress")
+	assert.Contains(t, tags, "priority:high")
 
 	meta := item.GetMetadata()
 	assert.Equal(t, "Fix the login bug", meta["summary"])

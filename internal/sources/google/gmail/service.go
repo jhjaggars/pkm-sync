@@ -244,6 +244,7 @@ func (s *Service) GetMessagesInRange(start, end time.Time, limit int) ([]*gmail.
 // so that label IDs are replaced with query-safe names without mutating config.
 func (s *Service) buildQuery(since time.Time) string {
 	cfg := s.queryConfig()
+
 	return buildQuery(cfg, since)
 }
 
@@ -251,6 +252,7 @@ func (s *Service) buildQuery(since time.Time) string {
 // It uses resolvedQueryLabels (if set) instead of the original config labels.
 func (s *Service) buildQueryWithRange(start, end time.Time) string {
 	cfg := s.queryConfig()
+
 	return buildQueryWithRange(cfg, start, end)
 }
 
@@ -261,6 +263,7 @@ func (s *Service) queryConfig() models.GmailSourceConfig {
 	if len(s.resolvedQueryLabels) > 0 {
 		cfg.Labels = s.resolvedQueryLabels
 	}
+
 	return cfg
 }
 
@@ -898,6 +901,7 @@ func resolveLabelsFromMap(configLabels []string, idToName map[string]string) (re
 			resolved = append(resolved, label)
 		}
 	}
+
 	return resolved, unresolved
 }
 
@@ -911,9 +915,11 @@ func (s *Service) resolveLabels() error {
 
 	// Check if any labels need resolution.
 	needsResolution := false
+
 	for _, label := range s.config.Labels {
 		if isLabelID(label) {
 			needsResolution = true
+
 			break
 		}
 	}
@@ -922,6 +928,7 @@ func (s *Service) resolveLabels() error {
 		// No IDs to resolve — copy the slice so queryConfig() can use it.
 		s.resolvedQueryLabels = make([]string, len(s.config.Labels))
 		copy(s.resolvedQueryLabels, s.config.Labels)
+
 		return nil
 	}
 

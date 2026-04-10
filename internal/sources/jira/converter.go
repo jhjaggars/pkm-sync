@@ -112,20 +112,20 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 	tags = append(tags, issue.Fields.Labels...)
 
 	if issue.Fields.IssueType.Name != "" {
-		tags = append(tags, "type/"+sanitizeTag(issue.Fields.IssueType.Name))
+		tags = append(tags, "type:"+sanitizeTag(issue.Fields.IssueType.Name))
 	}
 
 	if issue.Fields.Status.Name != "" {
-		tags = append(tags, "status/"+sanitizeTag(issue.Fields.Status.Name))
+		tags = append(tags, "status:"+sanitizeTag(issue.Fields.Status.Name))
 	}
 
 	if issue.Fields.Priority.Name != "" {
-		tags = append(tags, "priority/"+sanitizeTag(issue.Fields.Priority.Name))
+		tags = append(tags, "priority:"+sanitizeTag(issue.Fields.Priority.Name))
 	}
 
 	for _, comp := range issue.Fields.Components {
 		if comp.Name != "" {
-			tags = append(tags, "component/"+sanitizeTag(comp.Name))
+			tags = append(tags, "component:"+sanitizeTag(comp.Name))
 		}
 	}
 

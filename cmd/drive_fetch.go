@@ -272,7 +272,10 @@ func extractSourceURL(filePath string) (string, error) {
 		}
 
 		if inFrontmatter && strings.HasPrefix(line, "source_url: ") {
-			return strings.TrimPrefix(line, "source_url: "), nil
+			val := strings.TrimPrefix(line, "source_url: ")
+			val = strings.Trim(val, "\"")
+
+			return val, nil
 		}
 	}
 
