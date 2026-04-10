@@ -391,8 +391,9 @@ type TaggingRule struct {
 
 type JiraSourceConfig struct {
 	// Instance and authentication
-	InstanceURL string   `json:"instance_url" yaml:"instance_url"` // "https://company.atlassian.net"
-	ProjectKeys []string `json:"project_keys" yaml:"project_keys"` // ["PROJ", "TEAM"]
+	InstanceURL  string   `json:"instance_url"  yaml:"instance_url"` // "https://company.atlassian.net"
+	Installation string   `json:"installation"  yaml:"installation"` // "Cloud" or "Local" (default: from jira-cli config)
+	ProjectKeys  []string `json:"project_keys"  yaml:"project_keys"` // ["PROJ", "TEAM"]
 
 	// Issue filtering
 	JQL            string   `json:"jql"             yaml:"jql"`             // Custom JQL query
