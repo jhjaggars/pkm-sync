@@ -84,7 +84,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 
 	// Register transformers
 	contentCleanup := NewContentCleanupTransformer()
-	autoTagging := NewAutoTaggingTransformer()
+	autoTagging := NewEnhancedAutoTaggingTransformer()
 	filter := NewFilterTransformer()
 
 	pipeline.AddTransformer(contentCleanup)

@@ -61,7 +61,7 @@ func TestContentCleanupTransformerConfigure(t *testing.T) {
 }
 
 func TestAutoTaggingTransformer(t *testing.T) {
-	transformer := NewAutoTaggingTransformer()
+	transformer := NewEnhancedAutoTaggingTransformer()
 
 	if transformer.Name() != "auto_tagging" {
 		t.Errorf("Expected name 'auto_tagging', got '%s'", transformer.Name())
@@ -123,7 +123,7 @@ func TestAutoTaggingTransformer(t *testing.T) {
 }
 
 func TestAutoTaggingTransformerNoDuplicates(t *testing.T) {
-	transformer := NewAutoTaggingTransformer()
+	transformer := NewEnhancedAutoTaggingTransformer()
 
 	items := []models.FullItem{
 		func() models.FullItem {
@@ -261,17 +261,19 @@ func TestFilterTransformerInvalidConfig(t *testing.T) {
 }
 
 func TestGetAllExampleTransformers(t *testing.T) {
-	// GetAllExampleTransformers now returns all 6 transformers (same as GetAllContentProcessingTransformers).
+	// GetAllExampleTransformers returns all registered transformers
+	// (content_cleanup, link_extraction, signature_removal, thread_grouping,
+	// auto_tagging, content_filter, filter).
 	transformers := GetAllExampleTransformers()
-	if len(transformers) != 6 {
-		t.Errorf("Expected 6 transformers, got %d", len(transformers))
+	if len(transformers) != 7 {
+		t.Errorf("Expected 7 transformers, got %d", len(transformers))
 	}
 }
 
 func TestGetAllContentProcessingTransformers(t *testing.T) {
 	transformers := GetAllContentProcessingTransformers()
-	if len(transformers) != 6 {
-		t.Errorf("Expected 6 content processing transformers, got %d", len(transformers))
+	if len(transformers) != 7 {
+		t.Errorf("Expected 7 content processing transformers, got %d", len(transformers))
 	}
 }
 
