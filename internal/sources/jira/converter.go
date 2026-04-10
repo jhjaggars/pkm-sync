@@ -23,6 +23,7 @@ func compileExcludePatterns(patterns []string) []*regexp.Regexp {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			slog.Warn("Invalid comment_exclude_pattern, skipping", "pattern", p, "error", err)
+
 			continue
 		}
 
@@ -30,6 +31,51 @@ func compileExcludePatterns(patterns []string) []*regexp.Regexp {
 	}
 
 	return compiled
+}
+
+// withIssueComments appends a formatted "## Comments" section to content,
+// skipping comments whose body matches any of the excludePatternStrs regexes.
+func withIssueComments(content string, issue *jiraclient.Issue, excludePatternStrs []string) string {
+	type commentEntry struct{ author, created, body string }
+
+	excludePatterns := compileExcludePatterns(excludePatternStrs)
+
+	entries := make([]commentEntry, 0, len(issue.Fields.Comment.Comments))
+
+	for _, c := range issue.Fields.Comment.Comments {
+		body := descriptionToMarkdown(c.Body)
+		if matchesAny(body, excludePatterns) {
+			continue
+		}
+
+		name := c.Author.DisplayName
+		if name == "" {
+			name = c.Author.Name
+		}
+
+		entries = append(entries, commentEntry{author: name, created: c.Created, body: body})
+	}
+
+	if len(entries) == 0 {
+		return content
+	}
+
+	var sb strings.Builder
+
+	if content != "" {
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## Comments\n\n")
+
+	for _, e := range entries {
+		sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", e.author, e.created))
+		sb.WriteString(e.body)
+		sb.WriteString("\n\n")
+	}
+
+	return sb.String()
 }
 
 // issueToItem converts a Jira issue to a BasicItem.
@@ -56,41 +102,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 
 	// Append comments section when requested, filtering out automated noise.
 	if cfg.IncludeComments && issue.Fields.Comment.Total > 0 {
-		excludePatterns := compileExcludePatterns(cfg.CommentExcludePatterns)
-
-		var sb strings.Builder
-		hasComments := false
-
-		for _, c := range issue.Fields.Comment.Comments {
-			body := descriptionToMarkdown(c.Body)
-			if matchesAny(body, excludePatterns) {
-				continue
-			}
-
-			if !hasComments {
-				if content != "" {
-					sb.WriteString(content)
-					sb.WriteString("\n\n")
-				}
-
-				sb.WriteString("## Comments\n\n")
-
-				hasComments = true
-			}
-
-			authorName := c.Author.DisplayName
-			if authorName == "" {
-				authorName = c.Author.Name
-			}
-
-			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", authorName, c.Created))
-			sb.WriteString(body)
-			sb.WriteString("\n\n")
-		}
-
-		if hasComments {
-			content = sb.String()
-		}
+		content = withIssueComments(content, issue, cfg.CommentExcludePatterns)
 	}
 
 	item.Content = content
@@ -207,6 +219,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 // assignee, reporter, and comment authors.
 func collectContributors(issue *jiraclient.Issue) []string {
 	seen := make(map[string]bool)
+
 	var contributors []string
 
 	addContributor := func(name string) {
@@ -247,6 +260,7 @@ func matchesAny(text string, patterns []*regexp.Regexp) bool {
 func sanitizeTag(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
+
 	return s
 }
 
@@ -271,6 +285,7 @@ func descriptionToMarkdown(desc any) string {
 	if err := json.Unmarshal(data, &adfDoc); err == nil && adfDoc.Version > 0 {
 		translator := adf.NewTranslator(&adfDoc, adf.NewMarkdownTranslator())
 		result := translator.Translate()
+
 		return fixInlineCards(result)
 	}
 

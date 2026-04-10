@@ -16,6 +16,8 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const driveItemTypeDocument = "document"
+
 // driveExporter is the subset of drive.Service used by fetchDrive and convertDriveFile.
 // It is defined as an interface to allow injection of test doubles.
 type driveExporter interface {
@@ -291,7 +293,7 @@ func (g *GoogleSource) fetchDrive(since time.Time, limit int) ([]models.FullItem
 	if len(cfg.WorkspaceTypes) > 0 {
 		for _, wt := range cfg.WorkspaceTypes {
 			switch wt {
-			case "document":
+			case driveItemTypeDocument:
 				mimeTypes = append(mimeTypes, drive.MimeTypeGoogleDoc)
 			case "spreadsheet":
 				mimeTypes = append(mimeTypes, drive.MimeTypeGoogleSheet)
@@ -482,7 +484,7 @@ func (g *GoogleSource) convertDriveFile(
 
 	switch file.MimeType {
 	case drive.MimeTypeGoogleDoc:
-		itemType = "document"
+		itemType = driveItemTypeDocument
 	case drive.MimeTypeGoogleSheet:
 		itemType = "spreadsheet"
 	case drive.MimeTypeGooglePresentation:
@@ -502,7 +504,7 @@ func (g *GoogleSource) convertDriveFile(
 		links = append(links, models.Link{
 			URL:   file.WebViewLink,
 			Title: "View in Drive",
-			Type:  "document",
+			Type:  driveItemTypeDocument,
 		})
 	}
 

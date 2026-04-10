@@ -869,9 +869,11 @@ func (s *Service) resolveLabels() error {
 
 	// Check if any labels need resolution
 	needsResolution := false
+
 	for _, label := range s.config.Labels {
 		if isLabelID(label) {
 			needsResolution = true
+
 			break
 		}
 	}
@@ -917,5 +919,6 @@ func (s *Service) resolveLabels() error {
 	}
 
 	s.config.Labels = resolvedLabels
+
 	return nil
 }

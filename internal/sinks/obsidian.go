@@ -223,6 +223,7 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 			sb.WriteString(o.formatAttendees(value))
 		} else if arr, ok := value.([]string); ok {
 			fmt.Fprintf(&sb, "%s:\n", key)
+
 			for _, item := range arr {
 				fmt.Fprintf(&sb, "  - %s\n", item)
 			}

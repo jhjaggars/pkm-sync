@@ -455,11 +455,11 @@ func TestLabelNameToQuery(t *testing.T) {
 
 func TestResolveLabels(t *testing.T) {
 	tests := []struct {
-		name           string
-		configLabels   []string
+		name            string
+		configLabels    []string
 		availableLabels []*gmail.Label
-		expectedLabels []string
-		expectError    bool
+		expectedLabels  []string
+		expectError     bool
 	}{
 		{
 			name: "resolve user label IDs to query-safe names",
@@ -514,11 +514,11 @@ func TestResolveLabels(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:           "empty labels config",
-			configLabels:   []string{},
+			name:            "empty labels config",
+			configLabels:    []string{},
 			availableLabels: []*gmail.Label{},
-			expectedLabels: []string{},
-			expectError:    false,
+			expectedLabels:  []string{},
+			expectError:     false,
 		},
 		{
 			name: "mixed system and user labels",
@@ -557,9 +557,11 @@ func TestResolveLabels(t *testing.T) {
 
 			// Skip if no labels need resolution
 			needsResolution := false
+
 			for _, label := range tt.configLabels {
 				if isLabelID(label) {
 					needsResolution = true
+
 					break
 				}
 			}
@@ -569,11 +571,13 @@ func TestResolveLabels(t *testing.T) {
 				if len(mockService.config.Labels) != len(tt.expectedLabels) {
 					t.Errorf("Expected %d labels, got %d", len(tt.expectedLabels), len(mockService.config.Labels))
 				}
+
 				for i, label := range mockService.config.Labels {
 					if label != tt.expectedLabels[i] {
 						t.Errorf("Expected label %q, got %q", tt.expectedLabels[i], label)
 					}
 				}
+
 				return
 			}
 
@@ -605,8 +609,10 @@ func TestResolveLabels(t *testing.T) {
 			for i, expected := range tt.expectedLabels {
 				if i >= len(resolvedLabels) {
 					t.Errorf("Missing expected label: %q", expected)
+
 					continue
 				}
+
 				if resolvedLabels[i] != expected {
 					t.Errorf("Expected label %q at position %d, got %q", expected, i, resolvedLabels[i])
 				}

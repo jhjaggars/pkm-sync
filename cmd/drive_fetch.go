@@ -201,6 +201,7 @@ func writeRawToFile(content io.Reader, filePath string) error {
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = f.Close() }()
 
 	_, err = io.Copy(f, content)
@@ -230,6 +231,7 @@ func resolveOutputPath(outputFlag, docTitle, format string) string {
 // sanitizeFilename makes a document title safe for use as a filename.
 func sanitizeFilename(title string) string {
 	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "", "?", "", "\"", "", "<", "", ">", "", "|", "")
+
 	return replacer.Replace(title)
 }
 
@@ -256,6 +258,7 @@ func extractSourceURL(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)

@@ -19,19 +19,19 @@ func (a *Attendee) GetDisplayName() string {
 }
 
 type CalendarEvent struct {
-	ID          string
-	Summary     string
-	Description string
-	Start       time.Time
-	End         time.Time
-	StartTime   time.Time
-	EndTime     time.Time
-	IsAllDay    bool
-	Location    string
+	ID               string
+	Summary          string
+	Description      string
+	Start            time.Time
+	End              time.Time
+	StartTime        time.Time
+	EndTime          time.Time
+	IsAllDay         bool
+	Location         string
 	Attendees        []Attendee
 	MyResponseStatus string // The calendar owner's response: "accepted", "declined", "tentative", "needsAction"
 	MeetingURL       string
-	Attachments []CalendarAttachment
+	Attachments      []CalendarAttachment
 }
 
 type CalendarAttachment struct {
