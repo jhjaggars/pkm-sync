@@ -8,6 +8,8 @@ import (
 
 	jiraclient "github.com/ankitpokhrel/jira-cli/pkg/jira"
 
+	"github.com/ankitpokhrel/jira-cli/pkg/adf"
+
 	"pkm-sync/pkg/models"
 )
 
@@ -30,7 +32,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 	item.UpdatedAt = parseJiraTime(issue.Fields.Updated)
 
 	// Build content from description.
-	desc := descriptionToString(issue.Fields.Description)
+	desc := descriptionToMarkdown(issue.Fields.Description)
 	content := desc
 
 	// Append comments section when requested.
@@ -51,7 +53,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 			}
 
 			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", authorName, c.Created))
-			sb.WriteString(descriptionToString(c.Body))
+			sb.WriteString(descriptionToMarkdown(c.Body))
 			sb.WriteString("\n\n")
 		}
 
@@ -60,26 +62,42 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 
 	item.Content = content
 
-	// Build tags from labels, issue type, status, priority.
+	// Build tags using Obsidian nested tag format (tag/subtag).
 	tags := make([]string, 0, len(issue.Fields.Labels)+3)
 	tags = append(tags, issue.Fields.Labels...)
 
 	if issue.Fields.IssueType.Name != "" {
-		tags = append(tags, "type:"+strings.ToLower(strings.ReplaceAll(issue.Fields.IssueType.Name, " ", "-")))
+		tags = append(tags, "type/"+sanitizeTag(issue.Fields.IssueType.Name))
 	}
 
 	if issue.Fields.Status.Name != "" {
-		tags = append(tags, "status:"+strings.ToLower(strings.ReplaceAll(issue.Fields.Status.Name, " ", "-")))
+		tags = append(tags, "status/"+sanitizeTag(issue.Fields.Status.Name))
 	}
 
 	if issue.Fields.Priority.Name != "" {
-		tags = append(tags, "priority:"+strings.ToLower(issue.Fields.Priority.Name))
+		tags = append(tags, "priority/"+sanitizeTag(issue.Fields.Priority.Name))
+	}
+
+	for _, comp := range issue.Fields.Components {
+		if comp.Name != "" {
+			tags = append(tags, "component/"+sanitizeTag(comp.Name))
+		}
+	}
+
+	// Add issue link relationships as tags for Obsidian graph linking.
+	for _, link := range issue.Fields.IssueLinks {
+		if link.OutwardIssue != nil {
+			tags = append(tags, "links/"+sanitizeTag(link.LinkType.Outward)+"/"+link.OutwardIssue.Key)
+		}
+
+		if link.InwardIssue != nil {
+			tags = append(tags, "links/"+sanitizeTag(link.LinkType.Inward)+"/"+link.InwardIssue.Key)
+		}
 	}
 
 	item.Tags = tags
 
-	// Build metadata. "summary" holds the human-readable title so frontmatter
-	// includes both the issue key (as note title) and its summary text.
+	// Build metadata.
 	meta := map[string]any{
 		"summary":    issue.Fields.Summary,
 		"issue_key":  issue.Key,
@@ -96,6 +114,12 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 
 	meta["project"] = extractProject(issue.Key)
 
+	// Parent issue.
+	if issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
+		meta["parent"] = issue.Fields.Parent.Key
+	}
+
+	// Components.
 	if len(issue.Fields.Components) > 0 {
 		comps := make([]string, len(issue.Fields.Components))
 		for i, c := range issue.Fields.Components {
@@ -105,6 +129,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 		meta["components"] = comps
 	}
 
+	// Fix versions.
 	if len(issue.Fields.FixVersions) > 0 {
 		versions := make([]string, len(issue.Fields.FixVersions))
 		for i, v := range issue.Fields.FixVersions {
@@ -112,6 +137,31 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 		}
 
 		meta["fix_versions"] = versions
+	}
+
+	// Issue links — flat list of "relationship: KEY" for clean YAML serialization.
+	if len(issue.Fields.IssueLinks) > 0 {
+		var linkEntries []string
+
+		for _, link := range issue.Fields.IssueLinks {
+			if link.OutwardIssue != nil {
+				linkEntries = append(linkEntries, link.LinkType.Outward+": "+link.OutwardIssue.Key)
+			}
+
+			if link.InwardIssue != nil {
+				linkEntries = append(linkEntries, link.LinkType.Inward+": "+link.InwardIssue.Key)
+			}
+		}
+
+		if len(linkEntries) > 0 {
+			meta["issue_links"] = linkEntries
+		}
+	}
+
+	// Contributors — unique set of assignee, reporter, and commenters.
+	contributors := collectContributors(issue)
+	if len(contributors) > 0 {
+		meta["contributors"] = contributors
 	}
 
 	item.Metadata = meta
@@ -128,9 +178,45 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 	return item
 }
 
-// descriptionToString converts a Jira description field to a plain string.
-// In V2 API it's a string; in V3 it's an ADF object.
-func descriptionToString(desc any) string {
+// collectContributors extracts unique contributor names from an issue's
+// assignee, reporter, and comment authors.
+func collectContributors(issue *jiraclient.Issue) []string {
+	seen := make(map[string]bool)
+	var contributors []string
+
+	addContributor := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			contributors = append(contributors, name)
+		}
+	}
+
+	addContributor(issue.Fields.Assignee.Name)
+	addContributor(issue.Fields.Reporter.Name)
+
+	for _, c := range issue.Fields.Comment.Comments {
+		name := c.Author.DisplayName
+		if name == "" {
+			name = c.Author.Name
+		}
+
+		addContributor(name)
+	}
+
+	return contributors
+}
+
+// sanitizeTag converts a string to a valid Obsidian nested tag segment.
+// Replaces spaces with hyphens and lowercases.
+func sanitizeTag(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	return s
+}
+
+// descriptionToMarkdown converts a Jira description field to markdown.
+// In V2 API the description is a string; in V3 it's an ADF document.
+func descriptionToMarkdown(desc any) string {
 	if desc == nil {
 		return ""
 	}
@@ -139,12 +225,19 @@ func descriptionToString(desc any) string {
 		return s
 	}
 
-	// Fallback: marshal to JSON for ADF or unexpected types.
+	// Try to parse as ADF (Atlassian Document Format) and render to markdown.
 	data, err := json.Marshal(desc)
 	if err != nil {
 		return ""
 	}
 
+	var adfDoc adf.ADF
+	if err := json.Unmarshal(data, &adfDoc); err == nil && adfDoc.Version > 0 {
+		translator := adf.NewTranslator(&adfDoc, adf.NewMarkdownTranslator())
+		return translator.Translate()
+	}
+
+	// Fallback for unexpected types.
 	return string(data)
 }
 

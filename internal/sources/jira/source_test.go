@@ -126,9 +126,9 @@ func TestIssueToItem_BasicFields(t *testing.T) {
 	tags := item.GetTags()
 	assert.Contains(t, tags, "backend")
 	assert.Contains(t, tags, "critical")
-	assert.Contains(t, tags, "type:bug")
-	assert.Contains(t, tags, "status:in-progress")
-	assert.Contains(t, tags, "priority:high")
+	assert.Contains(t, tags, "type/bug")
+	assert.Contains(t, tags, "status/in-progress")
+	assert.Contains(t, tags, "priority/high")
 
 	meta := item.GetMetadata()
 	assert.Equal(t, "Fix the login bug", meta["summary"])
@@ -234,12 +234,12 @@ func TestParseJiraTime_Invalid(t *testing.T) {
 }
 
 func TestDescriptionToString_String(t *testing.T) {
-	s := descriptionToString("hello world")
+	s := descriptionToMarkdown("hello world")
 	assert.Equal(t, "hello world", s)
 }
 
 func TestDescriptionToString_Nil(t *testing.T) {
-	s := descriptionToString(nil)
+	s := descriptionToMarkdown(nil)
 	assert.Equal(t, "", s)
 }
 
