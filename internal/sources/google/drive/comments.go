@@ -92,7 +92,7 @@ func InsertCommentMarkers(content string, comments []CommentData) string {
 		marker string
 	}
 
-	var insertions []insertion
+	insertions := make([]insertion, 0, len(comments))
 
 	for _, c := range comments {
 		if c.QuotedText == "" {

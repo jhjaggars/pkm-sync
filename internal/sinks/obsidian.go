@@ -9,6 +9,12 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// needsYAMLQuoting returns true if a string value contains characters that
+// require quoting in YAML (colons, brackets, quotes, etc.).
+func needsYAMLQuoting(s string) bool {
+	return strings.ContainsAny(s, ":{}[]#|>&*!@`\"'")
+}
+
 type obsidianFormatter struct {
 	vaultPath        string
 	templateDir      string
@@ -19,6 +25,22 @@ func newObsidianFormatter() *obsidianFormatter {
 	return &obsidianFormatter{
 		dailyNotesFormat: "2006-01-02",
 	}
+}
+
+// ObsidianFormatter provides public access to the obsidian formatting logic
+// for use outside the sinks package (e.g., drive fetch --output).
+type ObsidianFormatter struct {
+	inner *obsidianFormatter
+}
+
+// NewObsidianFormatterPublic creates a public ObsidianFormatter.
+func NewObsidianFormatterPublic() *ObsidianFormatter {
+	return &ObsidianFormatter{inner: newObsidianFormatter()}
+}
+
+// FormatItemContent formats a FullItem as an Obsidian markdown note with YAML frontmatter.
+func (f *ObsidianFormatter) FormatItemContent(item models.FullItem) string {
+	return f.inner.formatBasicItemContent(item)
 }
 
 func (o *obsidianFormatter) name() string {
@@ -199,8 +221,19 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 	for key, value := range metadata {
 		if key == "attendees" {
 			sb.WriteString(o.formatAttendees(value))
+		} else if arr, ok := value.([]string); ok {
+			fmt.Fprintf(&sb, "%s:\n", key)
+
+			for _, item := range arr {
+				fmt.Fprintf(&sb, "  - %s\n", item)
+			}
 		} else {
-			fmt.Fprintf(&sb, "%s: %v\n", key, value)
+			str := fmt.Sprintf("%v", value)
+			if needsYAMLQuoting(str) {
+				fmt.Fprintf(&sb, "%s: %q\n", key, str)
+			} else {
+				fmt.Fprintf(&sb, "%s: %s\n", key, str)
+			}
 		}
 	}
 

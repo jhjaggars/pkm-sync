@@ -3,18 +3,85 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
 	jiraclient "github.com/ankitpokhrel/jira-cli/pkg/jira"
 
+	"github.com/ankitpokhrel/jira-cli/pkg/adf"
+
 	"pkm-sync/pkg/models"
 )
+
+// compileExcludePatterns compiles regex patterns, logging warnings for invalid ones.
+func compileExcludePatterns(patterns []string) []*regexp.Regexp {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+
+	for _, p := range patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			slog.Warn("Invalid comment_exclude_pattern, skipping", "pattern", p, "error", err)
+
+			continue
+		}
+
+		compiled = append(compiled, re)
+	}
+
+	return compiled
+}
+
+// withIssueComments appends a formatted "## Comments" section to content,
+// skipping comments whose body matches any of the excludePatternStrs regexes.
+func withIssueComments(content string, issue *jiraclient.Issue, excludePatternStrs []string) string {
+	type commentEntry struct{ author, created, body string }
+
+	excludePatterns := compileExcludePatterns(excludePatternStrs)
+
+	entries := make([]commentEntry, 0, len(issue.Fields.Comment.Comments))
+
+	for _, c := range issue.Fields.Comment.Comments {
+		body := descriptionToMarkdown(c.Body)
+		if matchesAny(body, excludePatterns) {
+			continue
+		}
+
+		name := c.Author.DisplayName
+		if name == "" {
+			name = c.Author.Name
+		}
+
+		entries = append(entries, commentEntry{author: name, created: c.Created, body: body})
+	}
+
+	if len(entries) == 0 {
+		return content
+	}
+
+	var sb strings.Builder
+
+	if content != "" {
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## Comments\n\n")
+
+	for _, e := range entries {
+		sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", e.author, e.created))
+		sb.WriteString(e.body)
+		sb.WriteString("\n\n")
+	}
+
+	return sb.String()
+}
 
 // issueToItem converts a Jira issue to a BasicItem.
 // Title is set to the issue key (e.g. "PROJ-123") so the output filename is "PROJ-123.md",
 // matching the standard Obsidian Jira vault convention.
-func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool) models.FullItem {
+func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourceConfig) models.FullItem {
 	item := &models.BasicItem{
 		ID:         "jira_" + issue.Key,
 		Title:      issue.Key,
@@ -30,56 +97,41 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 	item.UpdatedAt = parseJiraTime(issue.Fields.Updated)
 
 	// Build content from description.
-	desc := descriptionToString(issue.Fields.Description)
+	desc := descriptionToMarkdown(issue.Fields.Description)
 	content := desc
 
-	// Append comments section when requested.
-	if includeComments && issue.Fields.Comment.Total > 0 {
-		var sb strings.Builder
-
-		if content != "" {
-			sb.WriteString(content)
-			sb.WriteString("\n\n")
-		}
-
-		sb.WriteString("## Comments\n\n")
-
-		for _, c := range issue.Fields.Comment.Comments {
-			authorName := c.Author.DisplayName
-			if authorName == "" {
-				authorName = c.Author.Name
-			}
-
-			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", authorName, c.Created))
-			sb.WriteString(descriptionToString(c.Body))
-			sb.WriteString("\n\n")
-		}
-
-		content = sb.String()
+	// Append comments section when requested, filtering out automated noise.
+	if cfg.IncludeComments && issue.Fields.Comment.Total > 0 {
+		content = withIssueComments(content, issue, cfg.CommentExcludePatterns)
 	}
 
 	item.Content = content
 
-	// Build tags from labels, issue type, status, priority.
-	tags := make([]string, 0, len(issue.Fields.Labels)+3)
+	// Build tags — categorization only (no relationships; those use wiki-links).
+	tags := make([]string, 0, len(issue.Fields.Labels)+4)
 	tags = append(tags, issue.Fields.Labels...)
 
 	if issue.Fields.IssueType.Name != "" {
-		tags = append(tags, "type:"+strings.ToLower(strings.ReplaceAll(issue.Fields.IssueType.Name, " ", "-")))
+		tags = append(tags, "type/"+sanitizeTag(issue.Fields.IssueType.Name))
 	}
 
 	if issue.Fields.Status.Name != "" {
-		tags = append(tags, "status:"+strings.ToLower(strings.ReplaceAll(issue.Fields.Status.Name, " ", "-")))
+		tags = append(tags, "status/"+sanitizeTag(issue.Fields.Status.Name))
 	}
 
 	if issue.Fields.Priority.Name != "" {
-		tags = append(tags, "priority:"+strings.ToLower(issue.Fields.Priority.Name))
+		tags = append(tags, "priority/"+sanitizeTag(issue.Fields.Priority.Name))
+	}
+
+	for _, comp := range issue.Fields.Components {
+		if comp.Name != "" {
+			tags = append(tags, "component/"+sanitizeTag(comp.Name))
+		}
 	}
 
 	item.Tags = tags
 
-	// Build metadata. "summary" holds the human-readable title so frontmatter
-	// includes both the issue key (as note title) and its summary text.
+	// Build metadata.
 	meta := map[string]any{
 		"summary":    issue.Fields.Summary,
 		"issue_key":  issue.Key,
@@ -96,6 +148,12 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 
 	meta["project"] = extractProject(issue.Key)
 
+	// Parent issue — wiki-link for Obsidian graph connection.
+	if issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
+		meta["parent"] = "\"[[jira/" + issue.Fields.Parent.Key + "]]\""
+	}
+
+	// Components.
 	if len(issue.Fields.Components) > 0 {
 		comps := make([]string, len(issue.Fields.Components))
 		for i, c := range issue.Fields.Components {
@@ -105,6 +163,7 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 		meta["components"] = comps
 	}
 
+	// Fix versions.
 	if len(issue.Fields.FixVersions) > 0 {
 		versions := make([]string, len(issue.Fields.FixVersions))
 		for i, v := range issue.Fields.FixVersions {
@@ -112,6 +171,34 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 		}
 
 		meta["fix_versions"] = versions
+	}
+
+	// Issue links — wiki-links grouped by relationship type.
+	if len(issue.Fields.IssueLinks) > 0 {
+		linksByType := make(map[string][]string)
+
+		for _, link := range issue.Fields.IssueLinks {
+			if link.OutwardIssue != nil {
+				rel := link.LinkType.Outward
+				linksByType[rel] = append(linksByType[rel], "[[jira/"+link.OutwardIssue.Key+"]]")
+			}
+
+			if link.InwardIssue != nil {
+				rel := link.LinkType.Inward
+				linksByType[rel] = append(linksByType[rel], "[[jira/"+link.InwardIssue.Key+"]]")
+			}
+		}
+
+		for rel, keys := range linksByType {
+			fieldName := sanitizeTag(rel)
+			meta[fieldName] = keys
+		}
+	}
+
+	// Contributors — unique set of assignee, reporter, and commenters.
+	contributors := collectContributors(issue)
+	if len(contributors) > 0 {
+		meta["contributors"] = contributors
 	}
 
 	item.Metadata = meta
@@ -128,9 +215,58 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, includeComments bool
 	return item
 }
 
-// descriptionToString converts a Jira description field to a plain string.
-// In V2 API it's a string; in V3 it's an ADF object.
-func descriptionToString(desc any) string {
+// collectContributors extracts unique contributor names from an issue's
+// assignee, reporter, and comment authors.
+func collectContributors(issue *jiraclient.Issue) []string {
+	seen := make(map[string]bool)
+
+	var contributors []string
+
+	addContributor := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			contributors = append(contributors, name)
+		}
+	}
+
+	addContributor(issue.Fields.Assignee.Name)
+	addContributor(issue.Fields.Reporter.Name)
+
+	for _, c := range issue.Fields.Comment.Comments {
+		name := c.Author.DisplayName
+		if name == "" {
+			name = c.Author.Name
+		}
+
+		addContributor(name)
+	}
+
+	return contributors
+}
+
+// matchesAny returns true if the text matches any of the compiled patterns.
+func matchesAny(text string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(text) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// sanitizeTag converts a string to a valid Obsidian nested tag segment.
+// Replaces spaces with hyphens and lowercases.
+func sanitizeTag(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+
+	return s
+}
+
+// descriptionToMarkdown converts a Jira description field to markdown.
+// In V2 API the description is a string; in V3 it's an ADF document.
+func descriptionToMarkdown(desc any) string {
 	if desc == nil {
 		return ""
 	}
@@ -139,13 +275,36 @@ func descriptionToString(desc any) string {
 		return s
 	}
 
-	// Fallback: marshal to JSON for ADF or unexpected types.
+	// Try to parse as ADF (Atlassian Document Format) and render to markdown.
 	data, err := json.Marshal(desc)
 	if err != nil {
 		return ""
 	}
 
+	var adfDoc adf.ADF
+	if err := json.Unmarshal(data, &adfDoc); err == nil && adfDoc.Version > 0 {
+		translator := adf.NewTranslator(&adfDoc, adf.NewMarkdownTranslator())
+		result := translator.Translate()
+
+		return fixInlineCards(result)
+	}
+
+	// Fallback for unexpected types.
 	return string(data)
+}
+
+// inlineCardPattern matches the jira-cli ADF translator's inlineCard output:
+//
+//	📍 https://redhat.atlassian.net/browse/KEY-123#icft=KEY-123
+//
+// and converts it to a markdown link: [KEY-123](url).
+var inlineCardPattern = regexp.MustCompile(
+	`📍\s*(https://[^\s]+/browse/([A-Z]+-\d+))#icft=[A-Z]+-\d+`,
+)
+
+// fixInlineCards replaces raw inlineCard artifacts with proper markdown links.
+func fixInlineCards(text string) string {
+	return inlineCardPattern.ReplaceAllString(text, "[$2]($1)")
 }
 
 // parseJiraTime parses a Jira timestamp string trying both RFC3339 formats.
