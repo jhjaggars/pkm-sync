@@ -78,6 +78,7 @@ test-output/
 
 # Agent system - local settings only, keep shared configs
 .claude/settings.local.json
+.devaipod
 
 # Test results and temporary files
 .test-results/
