@@ -1,6 +1,7 @@
 package sinks
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ type FileSink struct {
 	registry *formatters.Registry
 	// typeFormatters maps item type (e.g. "event") to a formatter name.
 	typeFormatters map[string]string
+	idIndex        map[string]string // id → existing file path
 }
 
 // NewFileSink creates a FileSink for the given formatter name and output directory.
@@ -36,7 +38,10 @@ func NewFileSink(formatterName string, outputDir string, config map[string]any) 
 
 	f.configure(config)
 
-	return &FileSink{fmt: f, outputDir: outputDir}, nil
+	sink := &FileSink{fmt: f, outputDir: outputDir}
+	sink.buildIDIndex()
+
+	return sink, nil
 }
 
 // WithFormatters attaches a compiled formatter registry and a type-to-name
@@ -71,7 +76,13 @@ func (s *FileSink) writeItem(item models.FullItem) error {
 		return err
 	}
 
-	filePath := filepath.Join(s.outputDir, dir, filename)
+	defaultPath := filepath.Join(s.outputDir, dir, filename)
+
+	// Use existing path if a file with this ID was found during indexing.
+	filePath := defaultPath
+	if existing, ok := s.idIndex[item.GetID()]; ok {
+		filePath = existing
+	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
@@ -148,6 +159,66 @@ func hasExtension(filename, ext string) bool {
 	suffix := filename[len(filename)-len(ext):]
 
 	return strings.EqualFold(suffix, ext)
+}
+
+// buildIDIndex scans the output directory for existing markdown files and
+// builds a map from frontmatter id values to file paths. This allows files
+// that have been moved to subdirectories to be updated in place.
+func (s *FileSink) buildIDIndex() {
+	s.idIndex = make(map[string]string)
+
+	err := filepath.Walk(s.outputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		id := extractFrontmatterID(path)
+		if id != "" {
+			s.idIndex[id] = path
+		}
+
+		return nil
+	})
+	if err != nil {
+		slog.Debug("Failed to build ID index", "dir", s.outputDir, "error", err)
+	}
+
+	if len(s.idIndex) > 0 {
+		slog.Debug("Built file ID index", "dir", s.outputDir, "entries", len(s.idIndex))
+	}
+}
+
+// extractFrontmatterID reads the first lines of a markdown file and returns
+// the value of the "id:" frontmatter field, or empty string if not found.
+func extractFrontmatterID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	inFrontmatter := false
+
+	for i := 0; i < 30 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		if line == "---" {
+			if inFrontmatter {
+				return "" // end of frontmatter, no id found
+			}
+
+			inFrontmatter = true
+
+			continue
+		}
+
+		if inFrontmatter && strings.HasPrefix(line, "id: ") {
+			return strings.TrimPrefix(line, "id: ")
+		}
+	}
+
+	return ""
 }
 
 // Preview generates a description of what files would be created/modified
