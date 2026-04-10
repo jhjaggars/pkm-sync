@@ -12,6 +12,7 @@ import (
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google/auth"
 	"pkm-sync/internal/sources/google/drive"
+	"pkm-sync/internal/utils"
 	"pkm-sync/pkg/models"
 
 	mdconverter "github.com/JohannesKaufmann/html-to-markdown/v2"
@@ -221,19 +222,12 @@ func resolveOutputPath(outputFlag, docTitle, format string) string {
 
 	info, err := os.Stat(outputFlag)
 	if (err == nil && info.IsDir()) || strings.HasSuffix(outputFlag, "/") {
-		safe := sanitizeFilename(docTitle)
+		safe := utils.SanitizeFilename(docTitle)
 
 		return filepath.Join(outputFlag, safe+ext)
 	}
 
 	return outputFlag
-}
-
-// sanitizeFilename makes a document title safe for use as a filename.
-func sanitizeFilename(title string) string {
-	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "", "?", "", "\"", "", "<", "", ">", "", "|", "")
-
-	return replacer.Replace(title)
 }
 
 func appendComments(driveService *drive.Service, fileID, markdown string) (string, error) {

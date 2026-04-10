@@ -504,6 +504,102 @@ func TestService_SetRequireMultipleAttendees(t *testing.T) {
 	}
 }
 
+func TestService_ConvertToModel_MyResponseStatus(t *testing.T) {
+	service := &Service{}
+
+	tests := []struct {
+		name               string
+		event              *calendar.Event
+		wantResponseStatus string
+		wantAttendeeCount  int
+	}{
+		{
+			name: "self attendee with accepted status",
+			event: &calendar.Event{
+				Id:      "evt-1",
+				Summary: "Team meeting",
+				Start:   &calendar.EventDateTime{DateTime: "2024-06-01T10:00:00Z"},
+				End:     &calendar.EventDateTime{DateTime: "2024-06-01T11:00:00Z"},
+				Attendees: []*calendar.EventAttendee{
+					{Email: "me@example.com", Self: true, ResponseStatus: "accepted"},
+					{Email: "other@example.com", ResponseStatus: "tentative"},
+				},
+			},
+			wantResponseStatus: "accepted",
+			wantAttendeeCount:  2,
+		},
+		{
+			name: "self attendee declined",
+			event: &calendar.Event{
+				Id:      "evt-2",
+				Summary: "Skipped meeting",
+				Start:   &calendar.EventDateTime{DateTime: "2024-06-01T10:00:00Z"},
+				End:     &calendar.EventDateTime{DateTime: "2024-06-01T11:00:00Z"},
+				Attendees: []*calendar.EventAttendee{
+					{Email: "other@example.com", ResponseStatus: "accepted"},
+					{Email: "me@example.com", Self: true, ResponseStatus: "declined"},
+				},
+			},
+			wantResponseStatus: "declined",
+			wantAttendeeCount:  2,
+		},
+		{
+			name: "no self attendee",
+			event: &calendar.Event{
+				Id:      "evt-3",
+				Summary: "Other meeting",
+				Start:   &calendar.EventDateTime{DateTime: "2024-06-01T10:00:00Z"},
+				End:     &calendar.EventDateTime{DateTime: "2024-06-01T11:00:00Z"},
+				Attendees: []*calendar.EventAttendee{
+					{Email: "user1@example.com", ResponseStatus: "accepted"},
+					{Email: "user2@example.com", ResponseStatus: "accepted"},
+				},
+			},
+			wantResponseStatus: "",
+			wantAttendeeCount:  2,
+		},
+		{
+			name: "no attendees at all",
+			event: &calendar.Event{
+				Id:      "evt-4",
+				Summary: "Solo event",
+				Start:   &calendar.EventDateTime{DateTime: "2024-06-01T10:00:00Z"},
+				End:     &calendar.EventDateTime{DateTime: "2024-06-01T11:00:00Z"},
+			},
+			wantResponseStatus: "",
+			wantAttendeeCount:  0,
+		},
+		{
+			name: "self attendee with empty email still sets response status",
+			event: &calendar.Event{
+				Id:      "evt-5",
+				Summary: "Edge case meeting",
+				Start:   &calendar.EventDateTime{DateTime: "2024-06-01T10:00:00Z"},
+				End:     &calendar.EventDateTime{DateTime: "2024-06-01T11:00:00Z"},
+				Attendees: []*calendar.EventAttendee{
+					{Email: "", Self: true, ResponseStatus: "accepted"},
+					{Email: "other@example.com", ResponseStatus: "tentative"},
+				},
+			},
+			wantResponseStatus: "accepted",
+			wantAttendeeCount:  1, // empty-email attendee not added to model
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := service.ConvertToModel(tt.event)
+
+			if model.MyResponseStatus != tt.wantResponseStatus {
+				t.Errorf("MyResponseStatus = %q, want %q", model.MyResponseStatus, tt.wantResponseStatus)
+			}
+			if len(model.Attendees) != tt.wantAttendeeCount {
+				t.Errorf("Attendee count = %d, want %d", len(model.Attendees), tt.wantAttendeeCount)
+			}
+		})
+	}
+}
+
 func TestService_SetIncludeSelfOnlyEvents(t *testing.T) {
 	service := &Service{}
 

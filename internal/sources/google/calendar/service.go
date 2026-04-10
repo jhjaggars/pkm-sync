@@ -175,6 +175,10 @@ func (s *Service) ConvertToModel(event *calendar.Event) *models.CalendarEvent {
 	}
 
 	for _, attendee := range event.Attendees {
+		if attendee.Self {
+			modelEvent.MyResponseStatus = attendee.ResponseStatus
+		}
+
 		if attendee.Email != "" {
 			modelAttendee := models.Attendee{
 				Email:          attendee.Email,
@@ -183,10 +187,6 @@ func (s *Service) ConvertToModel(event *calendar.Event) *models.CalendarEvent {
 				Self:           attendee.Self,
 			}
 			modelEvent.Attendees = append(modelEvent.Attendees, modelAttendee)
-
-			if attendee.Self {
-				modelEvent.MyResponseStatus = attendee.ResponseStatus
-			}
 		}
 	}
 

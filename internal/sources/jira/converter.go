@@ -217,6 +217,10 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 
 // collectContributors extracts unique contributor names from an issue's
 // assignee, reporter, and comment authors.
+//
+// Note: contributors are collected from ALL comments regardless of
+// CommentExcludePatterns. The intent is to track everyone who participated
+// in the issue, even if their comments were filtered from the rendered output.
 func collectContributors(issue *jiraclient.Issue) []string {
 	seen := make(map[string]bool)
 
