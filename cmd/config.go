@@ -9,7 +9,6 @@ import (
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/keystore"
 	"pkm-sync/internal/sources/google/auth"
-	"pkm-sync/pkg/models"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -219,7 +218,7 @@ func runConfigValidateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get enabled sources for summary
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 
 	fmt.Println("✅ Configuration is valid")
 	fmt.Printf("   Enabled sources: [%s]\n", strings.Join(enabledSources, ", "))
@@ -275,31 +274,6 @@ func getConfigFilePath() (string, error) {
 	}
 
 	return filepath.Join(defaultConfigDir, config.ConfigFileName), nil
-}
-
-// getEnabledSourcesForValidation returns enabled sources (same logic as sync command).
-func getEnabledSourcesForValidation(cfg *models.Config) []string {
-	var enabledSources []string
-
-	// Use explicit enabled_sources list if provided
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	// Fallback: find all enabled sources in config
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
 }
 
 // validateOutputDirectory checks if a directory path is writable.

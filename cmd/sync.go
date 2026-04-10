@@ -83,7 +83,7 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	switch {
 	case resolvedSource == "":
 		sourcesToSync = getEnabledSources(cfg)
-	case isSourceType(resolvedSource):
+	case routing.IsCanonicalType(resolvedSource):
 		// Filter all enabled sources that match this canonical type.
 		for _, name := range getEnabledSources(cfg) {
 			if sc, ok := cfg.Sources[name]; ok && sc.Type == resolvedSource {
@@ -262,17 +262,6 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// knownSourceTypes is the set of canonical config type strings.
-var knownSourceTypes = map[string]bool{
-	"gmail": true, "google_calendar": true, "google_drive": true,
-	"slack": true, "jira": true, "servicenow": true,
-}
-
-// isSourceType returns true if s is a canonical source type string (not a name).
-func isSourceType(s string) bool {
-	return knownSourceTypes[s]
-}
-
 // resolveSyncPositionalArg maps a positional arg to a source name or type.
 // If arg matches a configured source name, it is returned as-is.
 // If arg matches a type alias (e.g. "gmail", "drive"), the canonical type is returned.
@@ -285,7 +274,7 @@ func resolveSyncPositionalArg(cfg *models.Config, arg string) string {
 
 	// Type alias → canonical type.
 	canonical := routing.CanonicalSourceType(arg)
-	if isSourceType(canonical) {
+	if routing.IsCanonicalType(canonical) {
 		return canonical
 	}
 

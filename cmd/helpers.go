@@ -259,13 +259,23 @@ func inferLastSynced(dbPath, sourceName string) (time.Time, error) {
 	return t, nil
 }
 
-// getEnabledSources returns enabled source names from config.
+// getEnabledSources returns all enabled source names from config.
 func getEnabledSources(cfg *models.Config) []string {
+	return getEnabledSourcesByType(cfg, "")
+}
+
+// getEnabledSourcesByType returns enabled source names matching sourceType.
+// When sourceType is empty all enabled sources are returned.
+func getEnabledSourcesByType(cfg *models.Config, sourceType string) []string {
+	matches := func(sc models.SourceConfig) bool {
+		return sc.Enabled && (sourceType == "" || sc.Type == sourceType)
+	}
+
 	var enabledSources []string
 
 	if len(cfg.Sync.EnabledSources) > 0 {
 		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled {
+			if sc, exists := cfg.Sources[srcName]; exists && matches(sc) {
 				enabledSources = append(enabledSources, srcName)
 			}
 		}
@@ -273,8 +283,8 @@ func getEnabledSources(cfg *models.Config) []string {
 		return enabledSources
 	}
 
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled {
+	for srcName, sc := range cfg.Sources {
+		if matches(sc) {
 			enabledSources = append(enabledSources, srcName)
 		}
 	}
@@ -284,48 +294,12 @@ func getEnabledSources(cfg *models.Config) []string {
 
 // getEnabledGmailSources returns enabled Gmail source names from config.
 func getEnabledGmailSources(cfg *models.Config) []string {
-	var enabledSources []string
-
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "gmail" {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled && sourceConfig.Type == "gmail" {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
+	return getEnabledSourcesByType(cfg, "gmail")
 }
 
 // getEnabledDriveSources returns enabled Google Drive source names from config.
 func getEnabledDriveSources(cfg *models.Config) []string {
-	var enabledSources []string
-
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "google_drive" {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled && sourceConfig.Type == "google_drive" {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
+	return getEnabledSourcesByType(cfg, "google_drive")
 }
 
 // getSourceSubItems returns the identifiable sub-item keys for a source that
@@ -831,4 +805,51 @@ func calculateSummary(previews []*interfaces.FilePreview) DryRunSummary {
 	}
 
 	return summary
+}
+
+// findSourceByType searches the config for an enabled source matching
+// canonicalType (e.g. "google_drive", "jira"). If sourceName is non-empty it
+// must match exactly. Returns the source name and config on success.
+//
+// For sources that work without a config entry (Google Drive via OAuth), the
+// caller should fall back to a direct auth flow when this returns an error.
+func findSourceByType(cfg *models.Config, canonicalType, sourceName string) (string, models.SourceConfig, error) {
+	if sourceName != "" {
+		sc, ok := cfg.Sources[sourceName]
+		if !ok {
+			return "", models.SourceConfig{}, fmt.Errorf("source %q not found in config", sourceName)
+		}
+
+		if !sc.Enabled {
+			return "", models.SourceConfig{}, fmt.Errorf("source %q is disabled", sourceName)
+		}
+
+		if sc.Type != canonicalType {
+			return "", models.SourceConfig{}, fmt.Errorf("source %q has type %q, expected %q", sourceName, sc.Type, canonicalType)
+		}
+
+		return sourceName, sc, nil
+	}
+
+	var matches []string
+
+	for name, sc := range cfg.Sources {
+		if sc.Type == canonicalType && sc.Enabled {
+			matches = append(matches, name)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", models.SourceConfig{}, fmt.Errorf("no enabled %q source found in config", canonicalType)
+	case 1:
+		return matches[0], cfg.Sources[matches[0]], nil
+	default:
+		sort.Strings(matches)
+
+		return "", models.SourceConfig{}, fmt.Errorf(
+			"multiple %q sources configured, use --source to specify one: %s",
+			canonicalType, strings.Join(matches, ", "),
+		)
+	}
 }

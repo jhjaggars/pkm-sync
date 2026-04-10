@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"pkm-sync/internal/config"
-	"pkm-sync/pkg/models"
 
 	"github.com/spf13/cobra"
 )
@@ -48,7 +47,7 @@ func runJiraCommand(_ *cobra.Command, _ []string) error {
 	if jiraSourceName != "" {
 		sourcesToSync = []string{jiraSourceName}
 	} else {
-		sourcesToSync = getEnabledJiraSources(cfg)
+		sourcesToSync = getEnabledSourcesByType(cfg, "jira")
 	}
 
 	if len(sourcesToSync) == 0 {
@@ -73,27 +72,4 @@ func runJiraCommand(_ *cobra.Command, _ []string) error {
 		SourceKind:   "Jira",
 		ItemKind:     "issues",
 	})
-}
-
-// getEnabledJiraSources returns enabled Jira source names from config.
-func getEnabledJiraSources(cfg *models.Config) []string {
-	var enabledSources []string
-
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "jira" {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled && sourceConfig.Type == "jira" {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
 }

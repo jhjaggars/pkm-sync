@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"pkm-sync/internal/config"
-	"pkm-sync/pkg/models"
 
 	"github.com/spf13/cobra"
 )
@@ -48,7 +47,7 @@ func runServiceNowCommand(_ *cobra.Command, _ []string) error {
 	if servicenowSourceName != "" {
 		sourcesToSync = []string{servicenowSourceName}
 	} else {
-		sourcesToSync = getEnabledServiceNowSources(cfg)
+		sourcesToSync = getEnabledSourcesByType(cfg, "servicenow")
 	}
 
 	if len(sourcesToSync) == 0 {
@@ -73,27 +72,4 @@ func runServiceNowCommand(_ *cobra.Command, _ []string) error {
 		SourceKind:   "ServiceNow",
 		ItemKind:     "tickets",
 	})
-}
-
-// getEnabledServiceNowSources returns enabled ServiceNow source names from config.
-func getEnabledServiceNowSources(cfg *models.Config) []string {
-	var enabledSources []string
-
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "servicenow" {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled && sourceConfig.Type == "servicenow" {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
 }

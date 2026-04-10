@@ -89,3 +89,20 @@ func CanonicalSourceType(alias string) string {
 
 	return alias
 }
+
+// knownCanonicalTypes is the set of all canonical source type strings.
+// It is derived from the values of sourceTypeAliases to avoid duplication.
+var knownCanonicalTypes = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, v := range sourceTypeAliases {
+		m[v] = true
+	}
+
+	return m
+}()
+
+// IsCanonicalType reports whether s is a canonical source type string
+// (e.g. "google_drive", "jira") as opposed to an alias or source name.
+func IsCanonicalType(s string) bool {
+	return knownCanonicalTypes[s]
+}

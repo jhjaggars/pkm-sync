@@ -26,7 +26,7 @@ func TestGetEnabledSourcesForValidation_ExplicitList(t *testing.T) {
 		},
 	}
 
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 
 	if len(enabledSources) != 2 {
 		t.Errorf("Expected 2 enabled sources, got %d", len(enabledSources))
@@ -73,7 +73,7 @@ func TestGetEnabledSourcesForValidation_FallbackToEnabled(t *testing.T) {
 		},
 	}
 
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 
 	if len(enabledSources) != 2 {
 		t.Errorf("Expected 2 enabled sources, got %d", len(enabledSources))
@@ -194,7 +194,7 @@ targets:
 		t.Errorf("Default target '%s' should exist in targets", cfg.Sync.DefaultTarget)
 	}
 
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 	if len(enabledSources) == 0 {
 		t.Error("Should have at least one enabled source")
 	}
@@ -285,7 +285,7 @@ func TestConfigValidation_InvalidConfig_NoEnabledSources(t *testing.T) {
 		},
 	}
 
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 	if len(enabledSources) != 0 {
 		t.Errorf("Should have no enabled sources, got %v", enabledSources)
 	}
@@ -318,7 +318,7 @@ targets:
 	}
 
 	// Check that only google_calendar is actually enabled
-	enabledSources := getEnabledSourcesForValidation(cfg)
+	enabledSources := getEnabledSources(cfg)
 	if len(enabledSources) != 1 || enabledSources[0] != "google_calendar" {
 		t.Errorf("Expected only google_calendar to be enabled, got %v", enabledSources)
 	}

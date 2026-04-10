@@ -51,7 +51,7 @@ func runSlackCommand(_ *cobra.Command, _ []string) error {
 	if slackSourceName != "" {
 		sourcesToSync = []string{slackSourceName}
 	} else {
-		sourcesToSync = getEnabledSlackSources(cfg)
+		sourcesToSync = getEnabledSourcesByType(cfg, "slack")
 	}
 
 	if len(sourcesToSync) == 0 {
@@ -112,27 +112,4 @@ func printSlackDryRunSummary(items []models.FullItem, dbPath string) {
 
 	fmt.Printf("\nTotal: %d messages across %d channels\n", len(items), len(counts))
 	fmt.Printf("Would write to: %s\n", dbPath)
-}
-
-// getEnabledSlackSources returns enabled Slack source names from config.
-func getEnabledSlackSources(cfg *models.Config) []string {
-	var enabledSources []string
-
-	if len(cfg.Sync.EnabledSources) > 0 {
-		for _, srcName := range cfg.Sync.EnabledSources {
-			if sourceConfig, exists := cfg.Sources[srcName]; exists && sourceConfig.Enabled && sourceConfig.Type == "slack" {
-				enabledSources = append(enabledSources, srcName)
-			}
-		}
-
-		return enabledSources
-	}
-
-	for srcName, sourceConfig := range cfg.Sources {
-		if sourceConfig.Enabled && sourceConfig.Type == "slack" {
-			enabledSources = append(enabledSources, srcName)
-		}
-	}
-
-	return enabledSources
 }

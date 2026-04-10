@@ -68,6 +68,7 @@ client_secret*.json
 *.zip
 *.rar
 .serena/
+.devaipod/
 
 # Exported files
 exported/
