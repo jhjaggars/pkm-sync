@@ -453,13 +453,13 @@ func TestLabelNameToQuery(t *testing.T) {
 	}
 }
 
-func TestResolveLabels(t *testing.T) {
+func TestResolveLabelsFromMap(t *testing.T) {
 	tests := []struct {
-		name            string
-		configLabels    []string
-		availableLabels []*gmail.Label
-		expectedLabels  []string
-		expectError     bool
+		name               string
+		configLabels       []string
+		idToName           map[string]string
+		expectedResolved   []string
+		expectedUnresolved []string
 	}{
 		{
 			name: "resolve user label IDs to query-safe names",
@@ -468,17 +468,17 @@ func TestResolveLabels(t *testing.T) {
 				"INBOX",
 				"Label_1234567890",
 			},
-			availableLabels: []*gmail.Label{
-				{Id: "INBOX", Name: "INBOX"},
-				{Id: "Label_2715051305847482596", Name: "Konflux-git-docs (d&s)"},
-				{Id: "Label_1234567890", Name: "Work/Projects"},
+			idToName: map[string]string{
+				"INBOX":                     "INBOX",
+				"Label_2715051305847482596": "Konflux-git-docs (d&s)",
+				"Label_1234567890":          "Work/Projects",
 			},
-			expectedLabels: []string{
+			expectedResolved: []string{
 				"Konflux-git-docs-(d&s)",
 				"INBOX",
 				"Work/Projects",
 			},
-			expectError: false,
+			expectedUnresolved: nil,
 		},
 		{
 			name: "system labels pass through unchanged",
@@ -487,38 +487,40 @@ func TestResolveLabels(t *testing.T) {
 				"IMPORTANT",
 				"STARRED",
 			},
-			availableLabels: []*gmail.Label{
-				{Id: "INBOX", Name: "INBOX"},
-				{Id: "IMPORTANT", Name: "IMPORTANT"},
-				{Id: "STARRED", Name: "STARRED"},
+			idToName: map[string]string{
+				"INBOX":     "INBOX",
+				"IMPORTANT": "IMPORTANT",
+				"STARRED":   "STARRED",
 			},
-			expectedLabels: []string{
+			expectedResolved: []string{
 				"INBOX",
 				"IMPORTANT",
 				"STARRED",
 			},
-			expectError: false,
+			expectedUnresolved: nil,
 		},
 		{
-			name: "skip unresolvable label IDs with warning",
+			name: "unresolvable label IDs returned in unresolved",
 			configLabels: []string{
 				"Label_9999999999",
 				"INBOX",
 			},
-			availableLabels: []*gmail.Label{
-				{Id: "INBOX", Name: "INBOX"},
+			idToName: map[string]string{
+				"INBOX": "INBOX",
 			},
-			expectedLabels: []string{
+			expectedResolved: []string{
 				"INBOX",
 			},
-			expectError: false,
+			expectedUnresolved: []string{
+				"Label_9999999999",
+			},
 		},
 		{
-			name:            "empty labels config",
-			configLabels:    []string{},
-			availableLabels: []*gmail.Label{},
-			expectedLabels:  []string{},
-			expectError:     false,
+			name:               "empty labels config",
+			configLabels:       []string{},
+			idToName:           map[string]string{},
+			expectedResolved:   []string{},
+			expectedUnresolved: nil,
 		},
 		{
 			name: "mixed system and user labels",
@@ -527,96 +529,101 @@ func TestResolveLabels(t *testing.T) {
 				"Label_123",
 				"STARRED",
 			},
-			availableLabels: []*gmail.Label{
-				{Id: "IMPORTANT", Name: "IMPORTANT"},
-				{Id: "STARRED", Name: "STARRED"},
-				{Id: "Label_123", Name: "Team/Backend (Dev)"},
+			idToName: map[string]string{
+				"IMPORTANT": "IMPORTANT",
+				"STARRED":   "STARRED",
+				"Label_123": "Team/Backend (Dev)",
 			},
-			expectedLabels: []string{
+			expectedResolved: []string{
 				"IMPORTANT",
 				"Team/Backend-(Dev)",
 				"STARRED",
 			},
-			expectError: false,
+			expectedUnresolved: nil,
+		},
+		{
+			name: "multiple unresolvable IDs",
+			configLabels: []string{
+				"Label_111",
+				"Label_222",
+				"INBOX",
+			},
+			idToName: map[string]string{
+				"INBOX": "INBOX",
+			},
+			expectedResolved: []string{
+				"INBOX",
+			},
+			expectedUnresolved: []string{
+				"Label_111",
+				"Label_222",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock service with the test configuration
-			mockService := &Service{
-				config: models.GmailSourceConfig{
-					Labels: tt.configLabels,
-				},
-				sourceID: "test",
+			resolved, unresolved := resolveLabelsFromMap(tt.configLabels, tt.idToName)
+
+			if len(resolved) != len(tt.expectedResolved) {
+				t.Fatalf("resolved: got %d labels %v, want %d labels %v",
+					len(resolved), resolved, len(tt.expectedResolved), tt.expectedResolved)
 			}
 
-			// Mock the GetLabels method by creating a temporary version
-			// Since we can't easily mock the service method in the actual resolveLabels,
-			// we'll test the logic separately here
-
-			// Skip if no labels need resolution
-			needsResolution := false
-
-			for _, label := range tt.configLabels {
-				if isLabelID(label) {
-					needsResolution = true
-
-					break
+			for i, want := range tt.expectedResolved {
+				if resolved[i] != want {
+					t.Errorf("resolved[%d] = %q, want %q", i, resolved[i], want)
 				}
 			}
 
-			if !needsResolution && len(tt.configLabels) > 0 {
-				// Verify system labels pass through
-				if len(mockService.config.Labels) != len(tt.expectedLabels) {
-					t.Errorf("Expected %d labels, got %d", len(tt.expectedLabels), len(mockService.config.Labels))
-				}
-
-				for i, label := range mockService.config.Labels {
-					if label != tt.expectedLabels[i] {
-						t.Errorf("Expected label %q, got %q", tt.expectedLabels[i], label)
-					}
-				}
-
-				return
+			if len(unresolved) != len(tt.expectedUnresolved) {
+				t.Fatalf("unresolved: got %d labels %v, want %d labels %v",
+					len(unresolved), unresolved, len(tt.expectedUnresolved), tt.expectedUnresolved)
 			}
 
-			// Build ID -> Name map
-			idToName := make(map[string]string)
-			for _, label := range tt.availableLabels {
-				idToName[label.Id] = label.Name
-			}
-
-			// Resolve labels
-			resolvedLabels := make([]string, 0, len(mockService.config.Labels))
-			for _, label := range mockService.config.Labels {
-				if isLabelID(label) {
-					if name, found := idToName[label]; found {
-						querySafeName := labelNameToQuery(name)
-						resolvedLabels = append(resolvedLabels, querySafeName)
-					}
-					// Skip labels that can't be resolved
-				} else {
-					resolvedLabels = append(resolvedLabels, label)
-				}
-			}
-
-			// Verify results
-			if len(resolvedLabels) != len(tt.expectedLabels) {
-				t.Errorf("Expected %d resolved labels, got %d", len(tt.expectedLabels), len(resolvedLabels))
-			}
-
-			for i, expected := range tt.expectedLabels {
-				if i >= len(resolvedLabels) {
-					t.Errorf("Missing expected label: %q", expected)
-
-					continue
-				}
-
-				if resolvedLabels[i] != expected {
-					t.Errorf("Expected label %q at position %d, got %q", expected, i, resolvedLabels[i])
+			for i, want := range tt.expectedUnresolved {
+				if unresolved[i] != want {
+					t.Errorf("unresolved[%d] = %q, want %q", i, unresolved[i], want)
 				}
 			}
 		})
+	}
+}
+
+func TestResolveLabelsDoesNotMutateConfig(t *testing.T) {
+	// Verify that resolveLabels() populates resolvedQueryLabels
+	// without mutating s.config.Labels.
+	originalLabels := []string{"Label_42", "INBOX"}
+	svc := &Service{
+		config: models.GmailSourceConfig{
+			Labels: originalLabels,
+		},
+		sourceID: "test-no-mutate",
+	}
+
+	// We can't call resolveLabels() without a real Gmail service (it would
+	// fail at GetLabels), but we can verify the no-resolution path.
+	svcNoIDs := &Service{
+		config: models.GmailSourceConfig{
+			Labels: []string{"INBOX", "STARRED"},
+		},
+		sourceID: "test-no-mutate",
+	}
+	// resolveLabels returns nil for no-resolution path and sets resolvedQueryLabels.
+	_ = svcNoIDs.resolveLabels()
+
+	if len(svcNoIDs.resolvedQueryLabels) != 2 {
+		t.Fatalf("expected 2 resolvedQueryLabels, got %d", len(svcNoIDs.resolvedQueryLabels))
+	}
+
+	// Mutating resolvedQueryLabels must not affect config.
+	svcNoIDs.resolvedQueryLabels[0] = "MUTATED"
+	if svcNoIDs.config.Labels[0] != "INBOX" {
+		t.Errorf("config.Labels was mutated: got %q, want %q", svcNoIDs.config.Labels[0], "INBOX")
+	}
+
+	// Original service's config should still have the label IDs.
+	if svc.config.Labels[0] != "Label_42" {
+		t.Errorf("config.Labels[0] mutated: got %q, want %q", svc.config.Labels[0], "Label_42")
 	}
 }
