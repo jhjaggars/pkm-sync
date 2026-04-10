@@ -21,6 +21,22 @@ func newObsidianFormatter() *obsidianFormatter {
 	}
 }
 
+// ObsidianFormatter provides public access to the obsidian formatting logic
+// for use outside the sinks package (e.g., drive fetch --output).
+type ObsidianFormatter struct {
+	inner *obsidianFormatter
+}
+
+// NewObsidianFormatterPublic creates a public ObsidianFormatter.
+func NewObsidianFormatterPublic() *ObsidianFormatter {
+	return &ObsidianFormatter{inner: newObsidianFormatter()}
+}
+
+// FormatItemContent formats a FullItem as an Obsidian markdown note with YAML frontmatter.
+func (f *ObsidianFormatter) FormatItemContent(item models.FullItem) string {
+	return f.inner.formatBasicItemContent(item)
+}
+
 func (o *obsidianFormatter) name() string {
 	return "obsidian"
 }
