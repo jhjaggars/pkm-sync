@@ -14,7 +14,7 @@ go build -o pkm-sync ./cmd     # Build named binary
 # Run the application (requires OAuth setup first)
 ./pkm-sync setup             # Verify authentication configuration
 ./pkm-sync gmail             # Sync Gmail emails to PKM systems
-./pkm-sync calendar          # List and sync Google Calendar events
+./pkm-sync calendar          # List and display Google Calendar events
 ./pkm-sync drive             # Sync Google Drive documents to PKM systems
 
 # Configuration management
@@ -43,21 +43,29 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 ### CLI Framework
 - Uses **Cobra** for command structure with persistent flags
 - Root command (`cmd/root.go`) handles global flags: `--credentials`, `--config-dir`, `--debug`, `--start`, `--end`
-- Main commands: `gmail`, `calendar`, `drive`, `config`, `setup`
+- Main commands: `sync`, `gmail`, `calendar`, `drive`, `jira`, `slack`, `servicenow`, `index`, `search`, `configure`, `config`, `setup`
 - Global flags are processed in `PersistentPreRun` to configure paths
 
-### Multi-Source Architecture (Sources → Transformers → Sinks)
-- **Universal interfaces** (`pkg/interfaces/`) for Source, Sink, and Transformer abstractions
+### Multi-Source Architecture (Sources → Transform → ResolveRefs → Sinks)
+- **Universal interfaces** (`pkg/interfaces/`) for Source, Sink, Transformer, and Resolver abstractions
 - **Universal data model** (`pkg/models/item.go`) with segregated interface hierarchy:
-  - **CoreItem**: Base interface with ID, title, source type
-  - **SourcedItem**: Extends CoreItem with source URL and metadata
+  - **CoreItem**: Base interface with ID, title, content
+  - **SourcedItem**: Extends CoreItem with source type (`source_type`) and item type (`item_type`)
   - **FullItem**: Composed interface (SourcedItem + TimestampedItem + EnrichedItem + SerializableItem)
   - **BasicItem**: Standard implementation for emails, calendar events, documents
   - **Thread**: Specialized implementation for email threads with embedded messages
-- **Source implementations** in `internal/sources/` (Google Calendar, Gmail, Drive)
-- **Sink implementations** in `internal/sinks/` — `FileSink` owns formatting logic for Obsidian and Logseq via unexported `formatter` interface; `VectorSink` for semantic search indexing
+- **Source implementations** in `internal/sources/` (Google Calendar, Gmail, Drive, Jira, Slack, ServiceNow)
+- **Sink implementations** in `internal/sinks/` — `FileSink` owns formatting logic for Obsidian and Logseq via unexported `formatter` interface; `VectorSink` for semantic search indexing; `SlackArchiveSink` for SQLite-backed Slack archive
 - **Transformer pipeline** (`internal/transform/`) for configurable item processing
-- **Sync engine** (`internal/sync/`) — `MultiSyncer.SyncAll()` runs Sources → Transform → Sinks pipeline
+- **Sync engine** (`internal/sync/`) — `MultiSyncer.SyncAll()` runs Sources → Transform → ResolveRefs → Sinks pipeline
+- **Reference resolution** (`internal/resolve/`) — cross-source URL resolution: fetches content linked from items (e.g. a Jira link in Slack) and appends it to the item set before sinks run
+- **State management** (`internal/state/`) — tracks active sub-items (channels, folders, project keys) per source across runs to detect newly added sub-items and give them a full lookback window
+- **Archive store** (`internal/archive/`) — SQLite-backed store for Gmail full-text search (FTS4)
+- **Vector store** (`internal/vectorstore/`) — SQLite-vec store for semantic search embeddings
+- **Embeddings** (`internal/embeddings/`) — pluggable embedding providers (Ollama, OpenAI)
+- **Keystore** (`internal/keystore/`) — secure credential storage using system keyring or encrypted file fallback
+- **Configure** (`internal/configure/`) — shared TUI configuration logic and per-source providers for the interactive `configure` command
+- **Utils** (`internal/utils/`) — shared filename sanitization helpers (path traversal prevention, slug generation, safe character replacement)
 
 ### Configuration System (`internal/config/config.go`)
 - **Multi-source configuration** supporting enabled sources array
@@ -77,12 +85,11 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - **Gmail requires additional scope**: `gmail.readonly` for email access
 
 ### Data Flow
-1. **Multi-source collection**: Sync engine iterates through enabled sources
-2. **Universal data model**: Each source converts data to common `FullItem` format
-3. **Transform pipeline**: Optional processing chain for item modification, filtering, and enhancement
-4. **Source tagging**: Optional tags added to identify data source
-5. **Target export**: Items formatted and exported according to target type
-6. **Single output directory**: All targets use `sync.default_output_dir`
+1. **Multi-source collection**: Sync engine fetches from all enabled sources concurrently; source failures are non-fatal
+2. **Source tagging**: Optional `source:<name>` tags added to each item
+3. **Transform pipeline**: Optional configurable processing chain (cleanup, tagging, filtering)
+4. **Reference resolution**: Optional cross-source URL resolution — items containing links to other sources trigger `Resolver` implementations that fetch and append referenced content
+5. **Sink fan-out**: Items written to all configured sinks concurrently (FileSink for Obsidian/Logseq, VectorSink for semantic search); first sink failure cancels remaining sinks
 
 ### Key Dependencies
 - `github.com/spf13/cobra` - CLI framework
@@ -111,6 +118,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 - ✅ **Google Drive** - Fully implemented as a first-class source (`google_drive` type) syncing Docs/Sheets/Slides from folders and shared drives
 - ✅ **Jira** - Implemented in `internal/sources/jira/` with bearer token auth, JQL query building, comments, and pagination (targets on-premise Jira like issues.redhat.com via V2 API)
 - ✅ **Slack** - Implemented in `internal/sources/slack/` with bearer token auth, SQLite archive sink, static `channels` list, dynamic `channel_groups` (`"starred"` + custom sidebar sections), threads, DMs, and interactive TUI configure
+- ✅ **ServiceNow** - Implemented in `internal/sources/servicenow/` with bearer token auth, configurable table sync (RITMs, incidents), encoded query/filter support
 
 ### Targets
 - ✅ **Obsidian** - Implemented with YAML frontmatter and hierarchical structure
@@ -129,21 +137,39 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
 ## Command Structure
 
 ### Core Commands
+- **`sync`** - Primary pipeline command; runs all enabled sources through the full pipeline in one shot
+  - Flags: `--source`, `--target`, `--output/-o`, `--since`, `--dry-run`, `--limit` (default 1000), `--format` (summary|json)
+
 - **`gmail`** - Sync Gmail emails to PKM systems
   - Supports multiple Gmail instances (work, personal, newsletters)
-  - Gmail-specific configuration and filtering
   - Thread grouping: individual, consolidated, or summary modes
   - Example: `pkm-sync gmail --source gmail_work --target obsidian`
 
-- **`calendar`** - List and sync Google Calendar events
-  - Calendar-specific functionality
+- **`calendar`** - List and display Google Calendar events (not part of the sync pipeline)
   - Example: `pkm-sync calendar --start 2025-01-01 --end 2025-01-31`
 
 - **`drive`** - Sync Google Drive documents (Docs, Sheets, Slides) to PKM systems
   - Reads `google_drive` sources from config file (folder IDs, shared drives, workspace types)
-  - `drive fetch <URL>` - Fetch a single document by URL and write to stdout (unchanged)
+  - `drive fetch <URL>` - Fetch a single document by URL and write to stdout
   - Example: `pkm-sync drive --source my_drive --target obsidian --since 7d`
   - Example: `pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md`
+
+- **`jira`** - Sync Jira issues to PKM files
+  - Example: `pkm-sync jira --source jira_work --since 7d`
+
+- **`slack`** - Sync Slack messages to a SQLite archive with full-text search
+  - Subcommands: `auth` (authenticate), `channels` (list channels)
+  - Example: `pkm-sync slack --source slack_work --since 7d`
+
+- **`servicenow`** - Sync ServiceNow tickets (RITMs, incidents) to PKM files
+  - Subcommands: `auth` (authenticate)
+  - Example: `pkm-sync servicenow --source snow_work --since 7d`
+
+- **`index`** - Index Gmail threads into a local SQLite vector database (requires embedding provider)
+  - Example: `pkm-sync index --source gmail_work --since 30d`
+
+- **`search <query>`** - Query the vector database built by `index`
+  - Example: `pkm-sync search "kubernetes deployment issues" --limit 5`
 
 ### Utility Commands
 - **`configure [source-name]`** - Interactively configure what to sync from each source
@@ -161,7 +187,7 @@ This is a Go CLI application that provides universal Personal Knowledge Manageme
   - Provides clear error messages and instructions
 
 - **`config`** - Manage configuration files
-  - Subcommands: `init`, `show`, `path`, `edit`, `validate`
+  - Subcommands: `init`, `show`, `path`, `edit`, `validate`, `migrate-secrets` (move credentials to keyring), `clear-token` (revoke OAuth token)
   - Configuration management and validation
 
 ## OAuth Setup Requirements
@@ -177,6 +203,17 @@ Users must:
 - Enable Gmail API in Google Cloud Console
 - Required scopes: `gmail.readonly` (automatically requested)
 - Same OAuth credentials work for all Google services
+
+### Interfaces (`pkg/interfaces/`)
+
+Key interfaces an agent working on this codebase needs to know:
+
+- **`Source`** — `Name() string`, `Configure(config map[string]interface{}, client *http.Client) error`, `Fetch(since time.Time, limit int) ([]models.FullItem, error)`, `SupportsRealtime() bool`
+- **`Sink`** — `Name() string`, `Write(ctx context.Context, items []models.FullItem) error`
+- **`Transformer`** — `Name() string`, `Configure(config map[string]interface{}) error`, `Transform(items []models.FullItem) ([]models.FullItem, error)`
+- **`TransformPipeline`** — `AddTransformer(t Transformer) error`, `Transform(items []models.FullItem) ([]models.FullItem, error)`, `Configure(config models.TransformConfig) error`
+- **`Resolver`** — `Name() string`, `CanResolve(rawURL string) bool`, `Resolve(ctx context.Context, rawURL string) (models.FullItem, error)` — used by `internal/resolve.Engine` for cross-source reference fetching
+- **`ContentTransformer`**, **`MetadataTransformer`** — narrower transformer variants operating on `[]models.CoreItem` and `[]models.EnrichedItem` respectively
 
 ## Transformer Pipeline System
 
