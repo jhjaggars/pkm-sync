@@ -95,8 +95,8 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 
 	item.Content = content
 
-	// Build tags using Obsidian nested tag format (tag/subtag).
-	tags := make([]string, 0, len(issue.Fields.Labels)+3)
+	// Build tags — categorization only (no relationships; those use wiki-links).
+	tags := make([]string, 0, len(issue.Fields.Labels)+4)
 	tags = append(tags, issue.Fields.Labels...)
 
 	if issue.Fields.IssueType.Name != "" {
@@ -114,17 +114,6 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 	for _, comp := range issue.Fields.Components {
 		if comp.Name != "" {
 			tags = append(tags, "component/"+sanitizeTag(comp.Name))
-		}
-	}
-
-	// Add issue link relationships as tags for Obsidian graph linking.
-	for _, link := range issue.Fields.IssueLinks {
-		if link.OutwardIssue != nil {
-			tags = append(tags, "links/"+sanitizeTag(link.LinkType.Outward)+"/"+link.OutwardIssue.Key)
-		}
-
-		if link.InwardIssue != nil {
-			tags = append(tags, "links/"+sanitizeTag(link.LinkType.Inward)+"/"+link.InwardIssue.Key)
 		}
 	}
 
@@ -147,9 +136,9 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 
 	meta["project"] = extractProject(issue.Key)
 
-	// Parent issue.
+	// Parent issue — wiki-link for Obsidian graph connection.
 	if issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
-		meta["parent"] = issue.Fields.Parent.Key
+		meta["parent"] = "\"[[jira/" + issue.Fields.Parent.Key + "]]\""
 	}
 
 	// Components.
@@ -172,22 +161,25 @@ func issueToItem(issue *jiraclient.Issue, serverURL string, cfg models.JiraSourc
 		meta["fix_versions"] = versions
 	}
 
-	// Issue links — flat list of "relationship: KEY" for clean YAML serialization.
+	// Issue links — wiki-links grouped by relationship type.
 	if len(issue.Fields.IssueLinks) > 0 {
-		var linkEntries []string
+		linksByType := make(map[string][]string)
 
 		for _, link := range issue.Fields.IssueLinks {
 			if link.OutwardIssue != nil {
-				linkEntries = append(linkEntries, link.LinkType.Outward+": "+link.OutwardIssue.Key)
+				rel := link.LinkType.Outward
+				linksByType[rel] = append(linksByType[rel], "[[jira/"+link.OutwardIssue.Key+"]]")
 			}
 
 			if link.InwardIssue != nil {
-				linkEntries = append(linkEntries, link.LinkType.Inward+": "+link.InwardIssue.Key)
+				rel := link.LinkType.Inward
+				linksByType[rel] = append(linksByType[rel], "[[jira/"+link.InwardIssue.Key+"]]")
 			}
 		}
 
-		if len(linkEntries) > 0 {
-			meta["issue_links"] = linkEntries
+		for rel, keys := range linksByType {
+			fieldName := sanitizeTag(rel)
+			meta[fieldName] = keys
 		}
 	}
 
