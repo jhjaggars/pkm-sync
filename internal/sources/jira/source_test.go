@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
@@ -126,9 +127,9 @@ func TestIssueToItem_BasicFields(t *testing.T) {
 	tags := item.GetTags()
 	assert.Contains(t, tags, "backend")
 	assert.Contains(t, tags, "critical")
-	assert.Contains(t, tags, "type/bug")
-	assert.Contains(t, tags, "status/in-progress")
-	assert.Contains(t, tags, "priority/high")
+	assert.Contains(t, tags, "type:bug")
+	assert.Contains(t, tags, "status:in-progress")
+	assert.Contains(t, tags, "priority:high")
 
 	meta := item.GetMetadata()
 	assert.Equal(t, "Fix the login bug", meta["summary"])
@@ -247,4 +248,121 @@ func TestExtractProject(t *testing.T) {
 	assert.Equal(t, "PROJ", extractProject("PROJ-123"))
 	assert.Equal(t, "MY-PROJ", extractProject("MY-PROJ-42"))
 	assert.Equal(t, "NONUM", extractProject("NONUM"))
+}
+
+func TestCompileExcludePatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		wantLen  int
+	}{
+		{
+			name:     "empty list",
+			patterns: []string{},
+			wantLen:  0,
+		},
+		{
+			name:     "valid patterns",
+			patterns: []string{`^automated`, `\bbot\b`, `JIRA.*created`},
+			wantLen:  3,
+		},
+		{
+			name:     "invalid pattern is skipped",
+			patterns: []string{`^valid`, `[invalid`, `also-valid$`},
+			wantLen:  2,
+		},
+		{
+			name:     "all invalid",
+			patterns: []string{`[`, `(`},
+			wantLen:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := compileExcludePatterns(tt.patterns)
+			assert.Len(t, result, tt.wantLen)
+		})
+	}
+}
+
+func TestMatchesAny(t *testing.T) {
+	patterns := compileExcludePatterns([]string{`^automated`, `\bbot\b`})
+
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"matches first pattern", "automated comment from system", true},
+		{"matches second pattern", "posted by bot today", true},
+		{"no match", "a normal human comment", false},
+		{"empty text", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, matchesAny(tt.text, patterns))
+		})
+	}
+
+	// Empty patterns should never match.
+	t.Run("empty patterns", func(t *testing.T) {
+		assert.False(t, matchesAny("anything", nil))
+		assert.False(t, matchesAny("anything", []*regexp.Regexp{}))
+	})
+}
+
+func TestSanitizeTag(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"In Progress", "in-progress"},
+		{"Bug", "bug"},
+		{"High Priority", "high-priority"},
+		{"already-lower", "already-lower"},
+		{"UPPER", "upper"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, sanitizeTag(tt.input))
+		})
+	}
+}
+
+func TestFixInlineCards(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single inline card",
+			input: "See 📍 https://redhat.atlassian.net/browse/KEY-123#icft=KEY-123 for details",
+			want:  "See [KEY-123](https://redhat.atlassian.net/browse/KEY-123) for details",
+		},
+		{
+			name:  "multiple inline cards",
+			input: "📍 https://redhat.atlassian.net/browse/PROJ-1#icft=PROJ-1 and 📍 https://redhat.atlassian.net/browse/PROJ-2#icft=PROJ-2",
+			want:  "[PROJ-1](https://redhat.atlassian.net/browse/PROJ-1) and [PROJ-2](https://redhat.atlassian.net/browse/PROJ-2)",
+		},
+		{
+			name:  "no inline cards",
+			input: "Just a normal string",
+			want:  "Just a normal string",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, fixInlineCards(tt.input))
+		})
+	}
 }
