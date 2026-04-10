@@ -117,6 +117,13 @@ func (e *Engine) Resolve(
 	return allItems, nil
 }
 
+// ResolveURL resolves a single URL to a FullItem without requiring an existing
+// item set. Returns (nil, nil) if no resolver matches the URL.
+// This is the public entry point for the `fetch` verb.
+func (e *Engine) ResolveURL(ctx context.Context, rawURL string) (models.FullItem, error) {
+	return e.resolveOne(ctx, rawURL)
+}
+
 // resolveOne tries each resolver in order and returns the first match.
 func (e *Engine) resolveOne(ctx context.Context, rawURL string) (models.FullItem, error) {
 	for _, r := range e.resolvers {

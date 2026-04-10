@@ -25,8 +25,9 @@ var (
 )
 
 var driveFetchCmd = &cobra.Command{
-	Use:   "fetch <URL>",
-	Short: "Fetch a Google Drive document by URL",
+	Use:        "fetch <URL>",
+	Short:      "Fetch a Google Drive document by URL",
+	Deprecated: "use 'pkm-sync fetch <URL>' instead",
 	Long: `Fetch a Google Drive document by URL and output its content.
 
 By default, content is written to stdout. Use --output to write a markdown

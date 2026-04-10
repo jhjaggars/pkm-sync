@@ -19,8 +19,9 @@ var (
 )
 
 var gmailCmd = &cobra.Command{
-	Use:   "gmail",
-	Short: "Sync Gmail emails to PKM systems",
+	Use:        "gmail",
+	Short:      "Sync Gmail emails to PKM systems",
+	Deprecated: "use 'pkm-sync sync gmail' or 'pkm-sync sync --source <name>' instead",
 	Long: `Sync Gmail emails to PKM targets (obsidian, logseq, etc.)
 
 Examples:

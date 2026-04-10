@@ -8,6 +8,8 @@ import (
 
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/state"
+	"pkm-sync/pkg/models"
+	"pkm-sync/pkg/routing"
 
 	"github.com/spf13/cobra"
 )
@@ -23,16 +25,28 @@ var (
 )
 
 var syncCmd = &cobra.Command{
-	Use:   "sync",
+	Use:   "sync [source]",
 	Short: "Sync all enabled sources to PKM systems",
 	Long: `Sync all enabled sources (Gmail, Google Calendar, Drive, Slack, Jira) to PKM targets in a single operation.
 
+An optional positional argument can filter to a specific source type or source
+name. Source type aliases like "gmail", "drive", "jira", "slack" are accepted:
+
+  pkm-sync sync gmail           # all enabled Gmail sources
+  pkm-sync sync gmail_work      # specific source by name
+  pkm-sync sync drive           # all enabled Drive sources
+
+The --source flag is also accepted for backward compatibility.
+
 Examples:
   pkm-sync sync
+  pkm-sync sync gmail
+  pkm-sync sync gmail_work
   pkm-sync sync --source gmail_work
   pkm-sync sync --target obsidian --output ./vault
   pkm-sync sync --since 7d --dry-run
-  pkm-sync sync --source gmail_work --dry-run --format json`,
+  pkm-sync sync gmail --dry-run --format json`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runSyncCommand,
 }
 
@@ -53,12 +67,36 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		cfg = config.GetDefaultConfig()
 	}
 
-	// Determine which sources to sync
+	// The optional positional arg can be a source name ("gmail_work") or a source
+	// type alias ("gmail", "drive"). Resolve into a local to avoid mutating the
+	// flag-backed global (which persists across in-process invocations).
+	resolvedSource := syncSourceName
+	if len(args) == 1 && resolvedSource == "" {
+		resolvedSource = resolveSyncPositionalArg(cfg, args[0])
+	}
+
+	// Determine which sources to sync.
+	// resolvedSource may be a source name ("gmail_work") or a canonical type
+	// ("gmail", "google_drive") when set via the positional arg.
 	var sourcesToSync []string
-	if syncSourceName != "" {
-		sourcesToSync = []string{syncSourceName}
-	} else {
+
+	switch {
+	case resolvedSource == "":
 		sourcesToSync = getEnabledSources(cfg)
+	case isSourceType(resolvedSource):
+		// Filter all enabled sources that match this canonical type.
+		for _, name := range getEnabledSources(cfg) {
+			if sc, ok := cfg.Sources[name]; ok && sc.Type == resolvedSource {
+				sourcesToSync = append(sourcesToSync, name)
+			}
+		}
+
+		if len(sourcesToSync) == 0 {
+			return fmt.Errorf("no enabled sources of type %q found", resolvedSource)
+		}
+	default:
+		// Treat as a specific source name.
+		sourcesToSync = []string{resolvedSource}
 	}
 
 	if len(sourcesToSync) == 0 {
@@ -222,4 +260,35 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// knownSourceTypes is the set of canonical config type strings.
+var knownSourceTypes = map[string]bool{
+	"gmail": true, "google_calendar": true, "google_drive": true,
+	"slack": true, "jira": true, "servicenow": true,
+}
+
+// isSourceType returns true if s is a canonical source type string (not a name).
+func isSourceType(s string) bool {
+	return knownSourceTypes[s]
+}
+
+// resolveSyncPositionalArg maps a positional arg to a source name or type.
+// If arg matches a configured source name, it is returned as-is.
+// If arg matches a type alias (e.g. "gmail", "drive"), the canonical type is returned.
+// If neither matches, the arg is returned unchanged (will fail later with a clear error).
+func resolveSyncPositionalArg(cfg *models.Config, arg string) string {
+	// Exact source name match takes priority.
+	if _, ok := cfg.Sources[arg]; ok {
+		return arg
+	}
+
+	// Type alias → canonical type.
+	canonical := routing.CanonicalSourceType(arg)
+	if isSourceType(canonical) {
+		return canonical
+	}
+
+	// Return unchanged; the caller will produce a helpful error.
+	return arg
 }
