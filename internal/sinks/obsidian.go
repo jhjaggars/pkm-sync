@@ -9,6 +9,12 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// needsYAMLQuoting returns true if a string value contains characters that
+// require quoting in YAML (colons, brackets, quotes, etc.).
+func needsYAMLQuoting(s string) bool {
+	return strings.ContainsAny(s, ":{}[]#|>&*!@`\"'")
+}
+
 type obsidianFormatter struct {
 	vaultPath        string
 	templateDir      string
@@ -221,7 +227,12 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 				fmt.Fprintf(&sb, "  - %s\n", item)
 			}
 		} else {
-			fmt.Fprintf(&sb, "%s: %v\n", key, value)
+			str := fmt.Sprintf("%v", value)
+			if needsYAMLQuoting(str) {
+				fmt.Fprintf(&sb, "%s: %q\n", key, str)
+			} else {
+				fmt.Fprintf(&sb, "%s: %s\n", key, str)
+			}
 		}
 	}
 
