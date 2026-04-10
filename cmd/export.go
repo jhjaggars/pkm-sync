@@ -19,20 +19,20 @@ var (
 )
 
 var driveCmd = &cobra.Command{
-	Use:   "drive",
-	Short: "Sync Google Drive documents to PKM systems",
+	Use:        "drive",
+	Short:      "Sync Google Drive documents to PKM systems",
+	Deprecated: "use 'pkm-sync sync drive' or 'pkm-sync sync --source <name>' instead. For single docs: 'pkm-sync fetch <URL>'",
 	Long: `Sync Google Drive documents (Google Docs, Sheets, Slides) to PKM targets.
 
 Configure google_drive sources in your config file to specify folders,
 shared drives, and export formats.
 
-Use the fetch subcommand to fetch a single document by URL:
-  pkm-sync drive fetch <URL>
+Use 'pkm-sync fetch <URL>' to fetch a single document by URL:
+  pkm-sync fetch "https://docs.google.com/document/d/abc123/edit"
 
 Examples:
   pkm-sync drive --source my_drive --target obsidian --output ./vault
-  pkm-sync drive --since 7d --dry-run
-  pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit"`,
+  pkm-sync drive --since 7d --dry-run`,
 	RunE: runDriveCommand,
 }
 

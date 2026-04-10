@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"pkm-sync/internal/archive"
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/vectorstore"
+	"pkm-sync/pkg/routing"
 
 	"github.com/spf13/cobra"
 )
@@ -23,16 +26,32 @@ var (
 )
 
 var searchCmd = &cobra.Command{
-	Use:   "search <query>",
-	Short: "Search indexed Gmail messages using semantic search",
-	Long: `Search indexed Gmail messages using semantic search.
-Returns threads ranked by similarity to your query.
+	Use:   "search [type[/source]] <query>",
+	Short: "Search indexed items using semantic search or Gmail full-text search",
+	Long: `Search indexed items using semantic (vector) search or Gmail full-text search.
+
+An optional first argument scopes the search to a source type or a specific
+source instance. The query is always the last argument.
+
+  Bare query — vector (semantic) search across all sources:
+    pkm-sync search "kubernetes deployment issues"
+
+  Source type — routes to the appropriate backend:
+    pkm-sync search gmail "meeting with alice"      # Gmail FTS (archive.db)
+    pkm-sync search slack "deploy failed"           # vector search, slack filter
+    pkm-sync search jira "authentication error"     # vector search, jira filter
+
+  Type/source — narrows to a specific configured source:
+    pkm-sync search gmail/work_gmail "rosa boundary"
+    pkm-sync search jira/jira_work "auth error"
 
 Examples:
   pkm-sync search "kubernetes deployment issues"
-  pkm-sync search "meetings with alice" --limit 5
-  pkm-sync search "project status" --source-name gmail_work --format json`,
-	Args: cobra.ExactArgs(1),
+  pkm-sync search gmail "rosa boundary"
+  pkm-sync search gmail/work_gmail "rosa boundary"
+  pkm-sync search slack "deploy failed" --limit 5
+  pkm-sync search "project status" --format json`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runSearchCommand,
 }
 
@@ -47,9 +66,85 @@ func init() {
 
 func runSearchCommand(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-	query := args[0]
 
-	// Load configuration
+	// Two-arg form: search <type[/source]> <query>
+	// One-arg form: search <query>
+	var query string
+
+	sourceTypeFilter := searchSourceType
+	sourceName := searchSourceName
+
+	if len(args) == 2 {
+		query = args[1]
+		// Parse the source specifier: "gmail" or "gmail/work_gmail"
+		specifier := args[0]
+		if idx := strings.Index(specifier, "/"); idx >= 0 {
+			sourceName = specifier[idx+1:]
+			specifier = specifier[:idx]
+		}
+
+		if sourceTypeFilter == "" {
+			sourceTypeFilter = routing.CanonicalSourceType(specifier)
+		}
+	} else {
+		query = args[0]
+	}
+
+	// Route gmail queries to the FTS archive when available.
+	if sourceTypeFilter == "gmail" {
+		if handled, err := runGmailFTSSearch(query, sourceName); handled {
+			return err
+		}
+		// Fall through to vector search if archive.db is not available.
+	}
+
+	// Default path: vector (semantic) search.
+	return runVectorSearch(ctx, query, sourceTypeFilter, sourceName)
+}
+
+// runGmailFTSSearch performs full-text search against archive.db.
+// sourceName optionally filters to a specific source (e.g. "work_gmail").
+// Returns (true, err) when the archive was found and queried (even on query error).
+// Returns (false, nil) when archive.db doesn't exist, so the caller can fall through.
+func runGmailFTSSearch(query, sourceName string) (bool, error) {
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return false, nil
+	}
+
+	dbPath := filepath.Join(configDir, "archive.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return false, nil // archive not set up, fall through to vector search
+	}
+
+	store, err := archive.NewStore(dbPath)
+	if err != nil {
+		return true, fmt.Errorf("failed to open archive: %w", err)
+	}
+	defer store.Close()
+
+	results, err := store.Search(query, searchLimit)
+	if err != nil {
+		return true, fmt.Errorf("archive search failed: %w", err)
+	}
+
+	// Filter by source name when specified.
+	if sourceName != "" {
+		filtered := results[:0]
+		for _, r := range results {
+			if r.SourceName == sourceName {
+				filtered = append(filtered, r)
+			}
+		}
+
+		results = filtered
+	}
+
+	return true, outputArchiveResults(query, results)
+}
+
+// runVectorSearch performs semantic (KNN) search against vectors.db.
+func runVectorSearch(ctx context.Context, query, sourceTypeFilter, sourceName string) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -61,20 +156,17 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 	}
 	defer vectorSink.Close()
 
-	// Build search filters
 	filters := vectorstore.SearchFilters{
-		SourceType: searchSourceType,
-		SourceName: searchSourceName,
+		SourceType: sourceTypeFilter,
+		SourceName: sourceName,
 		MinScore:   searchMinScore,
 	}
 
-	// Search
 	results, err := vectorSink.Search(ctx, query, searchLimit, filters)
 	if err != nil {
 		return fmt.Errorf("failed to search: %w", err)
 	}
 
-	// Output results
 	switch searchFormat {
 	case "json":
 		return outputJSON(query, results)
@@ -83,6 +175,26 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("unsupported format: %s (supported: text, json)", searchFormat)
 	}
+}
+
+// outputArchiveResults prints Gmail FTS results.
+func outputArchiveResults(query string, results []archive.FTSResult) error {
+	if len(results) == 0 {
+		fmt.Printf("No Gmail archive results for %q\n", query)
+
+		return nil
+	}
+
+	fmt.Printf("Found %d Gmail archive result(s) for %q:\n\n", len(results), query)
+
+	for i, r := range results {
+		fmt.Printf("%d. %s\n", i+1, r.Subject)
+		fmt.Printf("   From: %s | Source: %s | Date: %s\n",
+			r.FromAddr, r.SourceName, r.DateSent.Format("2006-01-02"))
+		fmt.Println()
+	}
+
+	return nil
 }
 
 // outputText outputs search results in human-readable text format.

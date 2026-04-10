@@ -17,8 +17,9 @@ var (
 )
 
 var servicenowCmd = &cobra.Command{
-	Use:   "servicenow",
-	Short: "Sync ServiceNow tickets to PKM systems",
+	Use:        "servicenow",
+	Short:      "Sync ServiceNow tickets to PKM systems",
+	Deprecated: "use 'pkm-sync sync servicenow' or 'pkm-sync sync --source <name>' instead",
 	Long: `Sync ServiceNow tickets (RITMs, incidents, etc.) from configured sources to PKM targets.
 
 Examples:

@@ -19,8 +19,9 @@ var (
 )
 
 var slackCmd = &cobra.Command{
-	Use:   "slack",
-	Short: "Sync Slack messages to SQLite archive",
+	Use:        "slack",
+	Short:      "Sync Slack messages to SQLite archive",
+	Deprecated: "use 'pkm-sync sync slack' or 'pkm-sync sync --source <name>' instead",
 	Long: `Sync Slack messages from configured sources into a SQLite archive with FTS5 full-text search.
 
 Examples:

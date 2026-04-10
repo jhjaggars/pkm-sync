@@ -17,8 +17,9 @@ var (
 )
 
 var jiraCmd = &cobra.Command{
-	Use:   "jira",
-	Short: "Sync Jira issues to PKM systems",
+	Use:        "jira",
+	Short:      "Sync Jira issues to PKM systems",
+	Deprecated: "use 'pkm-sync sync jira' or 'pkm-sync sync --source <name>' instead. For single issues: 'pkm-sync fetch jira/PROJ-123'",
 	Long: `Sync Jira issues from configured sources to PKM targets.
 
 Examples:

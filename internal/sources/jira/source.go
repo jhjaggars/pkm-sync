@@ -132,6 +132,13 @@ func (s *JiraSource) Fetch(since time.Time, limit int) ([]models.FullItem, error
 	return allItems, nil
 }
 
+// FetchOne implements interfaces.Fetcher. key is a Jira issue key such as
+// "PROJ-123". This makes JiraSource usable with the `pkm-sync fetch jira/KEY`
+// verb without going through the bulk Fetch pipeline.
+func (s *JiraSource) FetchOne(ctx context.Context, key string) (models.FullItem, error) {
+	return s.FetchIssue(ctx, key)
+}
+
 // FetchIssue retrieves a single Jira issue by key (e.g. "PROJ-123") and converts
 // it to a FullItem. Used by the cross-source reference resolver.
 func (s *JiraSource) FetchIssue(ctx context.Context, issueKey string) (models.FullItem, error) {
