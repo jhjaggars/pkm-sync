@@ -74,20 +74,10 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 	sourceTypeFilter := searchSourceType
 	sourceName := searchSourceName
 
-	if len(args) == 2 {
-		query = args[1]
-		// Parse the source specifier: "gmail" or "gmail/work_gmail"
-		specifier := args[0]
-		if idx := strings.Index(specifier, "/"); idx >= 0 {
-			sourceName = specifier[idx+1:]
-			specifier = specifier[:idx]
-		}
-
-		if sourceTypeFilter == "" {
-			sourceTypeFilter = routing.CanonicalSourceType(specifier)
-		}
-	} else {
+	if len(args) == 1 {
 		query = args[0]
+	} else {
+		query, sourceTypeFilter, sourceName = parseSearchSpecifier(args[1], args[0], sourceTypeFilter, sourceName)
 	}
 
 	// Route gmail queries to the FTS archive when available.
@@ -100,6 +90,26 @@ func runSearchCommand(cmd *cobra.Command, args []string) error {
 
 	// Default path: vector (semantic) search.
 	return runVectorSearch(ctx, query, sourceTypeFilter, sourceName)
+}
+
+// parseSearchSpecifier parses the optional first positional argument of the
+// two-arg search form: `search <specifier> <query>`. The specifier is either a
+// bare source type ("gmail") or "type/sourceName". Returns updated query,
+// sourceTypeFilter, and sourceName values.
+func parseSearchSpecifier(query, specifier, sourceTypeFilter, sourceName string) (string, string, string) {
+	if idx := strings.Index(specifier, "/"); idx >= 0 {
+		if sourceName == "" { // flag takes precedence over positional inference
+			sourceName = specifier[idx+1:]
+		}
+
+		specifier = specifier[:idx]
+	}
+
+	if sourceTypeFilter == "" {
+		sourceTypeFilter = routing.CanonicalSourceType(specifier)
+	}
+
+	return query, sourceTypeFilter, sourceName
 }
 
 // runGmailFTSSearch performs full-text search against archive.db.
@@ -123,12 +133,22 @@ func runGmailFTSSearch(query, sourceName string) (bool, error) {
 	}
 	defer store.Close()
 
-	results, err := store.Search(query, searchLimit)
+	// When filtering by source, fetch a larger set so the per-source results
+	// aren't truncated before we apply the filter. Otherwise use searchLimit.
+	fetchLimit := searchLimit
+	if sourceName != "" {
+		fetchLimit = 0 // store.Search treats 0 as its internal default (20); use a large cap
+		if searchLimit > 0 {
+			fetchLimit = searchLimit * 10 // generous multiplier to survive cross-source dilution
+		}
+	}
+
+	results, err := store.Search(query, fetchLimit)
 	if err != nil {
 		return true, fmt.Errorf("archive search failed: %w", err)
 	}
 
-	// Filter by source name when specified.
+	// Filter by source name when specified, then re-apply the user's limit.
 	if sourceName != "" {
 		filtered := results[:0]
 		for _, r := range results {
@@ -138,9 +158,12 @@ func runGmailFTSSearch(query, sourceName string) (bool, error) {
 		}
 
 		results = filtered
+		if searchLimit > 0 && len(results) > searchLimit {
+			results = results[:searchLimit]
+		}
 	}
 
-	return true, outputArchiveResults(query, results)
+	return true, outputArchiveResults(query, results, searchFormat)
 }
 
 // runVectorSearch performs semantic (KNN) search against vectors.db.
@@ -177,8 +200,43 @@ func runVectorSearch(ctx context.Context, query, sourceTypeFilter, sourceName st
 	}
 }
 
-// outputArchiveResults prints Gmail FTS results.
-func outputArchiveResults(query string, results []archive.FTSResult) error {
+// outputArchiveResults prints Gmail FTS results in text or JSON format.
+func outputArchiveResults(query string, results []archive.FTSResult, format string) error {
+	if format == "json" {
+		type jsonResult struct {
+			GmailID    string `json:"gmail_id"`
+			Subject    string `json:"subject"`
+			FromAddr   string `json:"from_addr"`
+			SourceName string `json:"source_name"`
+			DateSent   string `json:"date_sent"`
+		}
+
+		out := struct {
+			Query   string       `json:"query"`
+			Count   int          `json:"count"`
+			Results []jsonResult `json:"results"`
+		}{
+			Query:   query,
+			Count:   len(results),
+			Results: make([]jsonResult, len(results)),
+		}
+
+		for i, r := range results {
+			out.Results[i] = jsonResult{
+				GmailID:    r.GmailID,
+				Subject:    r.Subject,
+				FromAddr:   r.FromAddr,
+				SourceName: r.SourceName,
+				DateSent:   r.DateSent.Format(time.RFC3339),
+			}
+		}
+
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+
+		return enc.Encode(out)
+	}
+
 	if len(results) == 0 {
 		fmt.Printf("No Gmail archive results for %q\n", query)
 

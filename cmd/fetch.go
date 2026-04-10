@@ -13,6 +13,7 @@ import (
 	"pkm-sync/internal/sources/google/auth"
 	"pkm-sync/internal/sources/google/drive"
 	jirasource "pkm-sync/internal/sources/jira"
+	"pkm-sync/internal/utils"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 	"pkm-sync/pkg/routing"
@@ -99,9 +100,9 @@ func runFetchCommand(cmd *cobra.Command, args []string) error {
 }
 
 // runFetchByURL uses the resolve.Engine to fetch an item by URL.
-// Tries all configured resolvers; Drive and Jira are supported out of the box.
+// When fetchCmdSource is set, only resolvers matching that source name are used.
 func runFetchByURL(ctx context.Context, id routing.ParsedIdentifier) error {
-	resolvers, err := buildResolvers()
+	resolvers, err := buildResolvers(fetchCmdSource)
 	if err != nil {
 		return err
 	}
@@ -119,6 +120,14 @@ func runFetchByURL(ctx context.Context, id routing.ParsedIdentifier) error {
 
 	if item == nil {
 		return fmt.Errorf("no resolver matched URL %q", id.URL)
+	}
+
+	// Append Drive comments when requested.
+	if fetchCmdComments {
+		item, err = appendDriveComments(item, id.URL)
+		if err != nil {
+			return err
+		}
 	}
 
 	return outputFetchedItem(item, id.URL)
@@ -209,53 +218,91 @@ func runFetchBySourceName(ctx context.Context, key, sourceName string) error {
 }
 
 // buildResolvers constructs a resolver slice from available auth and config.
+// sourceName optionally restricts to a specific configured source (by name).
 // Drive resolution only requires Google OAuth. Jira resolution additionally
 // requires a configured jira source (for the instance URL).
-func buildResolvers() ([]interfaces.Resolver, error) {
+func buildResolvers(sourceName string) ([]interfaces.Resolver, error) {
 	var resolvers []interfaces.Resolver
 
-	// Drive resolver — requires only Google OAuth.
-	client, authErr := auth.GetClient()
-	if authErr == nil {
-		svc, svcErr := drive.NewService(client)
-		if svcErr == nil {
-			// Use default Drive config (empty DriveSourceConfig is fine for fetch).
-			resolvers = append(resolvers, resolve.NewDriveResolver(svc, models.DriveSourceConfig{}))
+	// Drive resolver — requires only Google OAuth. Skip when --source names a
+	// non-drive source explicitly.
+	addDrive := sourceName == "" || isSourceNameOfType(sourceName, "google_drive")
+	if addDrive {
+		client, authErr := auth.GetClient()
+		if authErr == nil {
+			svc, svcErr := drive.NewService(client)
+			if svcErr == nil {
+				resolvers = append(resolvers, resolve.NewDriveResolver(svc, models.DriveSourceConfig{}))
+			}
+		} else if sourceName != "" {
+			// Explicit drive source requested but auth failed — surface the error.
+			return nil, fmt.Errorf("authentication required: %w", authErr)
 		}
 	}
 
-	// Jira resolver — requires a configured jira source.
-	cfg, cfgErr := config.LoadConfig()
-	if cfgErr == nil {
-		for srcName, sc := range cfg.Sources {
-			if !sc.Enabled || sc.Type != "jira" {
-				continue
-			}
-
-			jiraSrc := jirasource.NewJiraSource(srcName, sc)
-			if err := jiraSrc.Configure(nil, nil); err != nil {
-				continue // skip if auth fails; don't abort
-			}
-
-			instanceURL := sc.Jira.InstanceURL
-			if instanceURL == "" {
-				continue // can't build a resolver without an instance URL
-			}
-
-			jr, err := resolve.NewJiraResolver(jiraSrc, instanceURL)
-			if err != nil {
-				continue
-			}
-
-			resolvers = append(resolvers, jr)
-		}
+	// Jira resolvers — one per configured jira source. When sourceName is set,
+	// only build the resolver for that specific source.
+	if cfg, err := config.LoadConfig(); err == nil {
+		resolvers = buildJiraResolvers(resolvers, cfg.Sources, sourceName)
 	}
 
-	if len(resolvers) == 0 && authErr != nil {
-		return nil, fmt.Errorf("authentication required: %w", authErr)
+	if len(resolvers) == 0 {
+		return nil, fmt.Errorf("no resolvers available (check authentication and source configuration)")
 	}
 
 	return resolvers, nil
+}
+
+// isSourceNameOfType returns true when the named source has the given canonical
+// type, or when sourceName is empty (no restriction).
+func isSourceNameOfType(sourceName, canonicalType string) bool {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return false
+	}
+
+	sc, ok := cfg.Sources[sourceName]
+
+	return ok && sc.Type == canonicalType
+}
+
+// appendDriveComments fetches Drive document comments and appends them as
+// markdown footnotes when --comments is set. Only applies to Drive items;
+// other source types are returned unchanged.
+func appendDriveComments(item models.FullItem, sourceURL string) (models.FullItem, error) {
+	if item.GetSourceType() != "google_drive" {
+		return item, nil
+	}
+
+	fileID, err := drive.ExtractFileID(sourceURL)
+	if err != nil {
+		return item, nil // not a Drive URL we can extract from — skip silently
+	}
+
+	client, err := auth.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("authentication required for --comments: %w", err)
+	}
+
+	svc, err := drive.NewService(client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create drive service: %w", err)
+	}
+
+	comments, err := svc.GetComments(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch comments: %w", err)
+	}
+
+	if len(comments) == 0 {
+		return item, nil
+	}
+
+	content := drive.InsertCommentMarkers(item.GetContent(), comments)
+	content += "\n\n" + drive.FormatCommentsAsFootnotes(comments)
+	item.SetContent(content)
+
+	return item, nil
 }
 
 // outputFetchedItem writes item content to stdout or to a file per CLI flags.
@@ -278,6 +325,10 @@ func outputFetchedItem(item models.FullItem, sourceURL string) error {
 
 		if fetchCmdOutput != "" {
 			outPath := resolveItemOutputPath(fetchCmdOutput, item.GetTitle(), "json")
+
+			if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
 
 			return os.WriteFile(outPath, data, 0644)
 		}
@@ -342,6 +393,38 @@ func writeFetchedItemToFile(item models.FullItem, sourceURL, content, outputFlag
 	return nil
 }
 
+// buildJiraResolvers appends a JiraResolver for each enabled jira source in
+// sources. When sourceName is non-empty only that source is considered.
+func buildJiraResolvers(resolvers []interfaces.Resolver, sources map[string]models.SourceConfig, sourceName string) []interfaces.Resolver {
+	for name, sc := range sources {
+		if !sc.Enabled || sc.Type != "jira" {
+			continue
+		}
+
+		if sourceName != "" && name != sourceName {
+			continue
+		}
+
+		if sc.Jira.InstanceURL == "" {
+			continue
+		}
+
+		jiraSrc := jirasource.NewJiraSource(name, sc)
+		if err := jiraSrc.Configure(nil, nil); err != nil {
+			continue
+		}
+
+		jr, err := resolve.NewJiraResolver(jiraSrc, sc.Jira.InstanceURL)
+		if err != nil {
+			continue
+		}
+
+		resolvers = append(resolvers, jr)
+	}
+
+	return resolvers
+}
+
 // resolveItemOutputPath determines the output path for a fetched item.
 // If outputFlag is an existing directory or ends with /, the title is used as filename.
 func resolveItemOutputPath(outputFlag, title, format string) string {
@@ -349,20 +432,10 @@ func resolveItemOutputPath(outputFlag, title, format string) string {
 
 	info, err := os.Stat(outputFlag)
 	if (err == nil && info.IsDir()) || strings.HasSuffix(outputFlag, "/") {
-		safe := sanitizeFetchFilename(title)
+		safe := utils.SanitizeFilename(title)
 
 		return filepath.Join(outputFlag, safe+ext)
 	}
 
 	return outputFlag
-}
-
-// sanitizeFetchFilename makes an item title safe for use as a filename.
-func sanitizeFetchFilename(title string) string {
-	replacer := strings.NewReplacer(
-		"/", "-", "\\", "-", ":", "-", "*", "", "?", "",
-		"\"", "", "<", "", ">", "", "|", "",
-	)
-
-	return replacer.Replace(title)
 }

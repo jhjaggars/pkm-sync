@@ -67,34 +67,36 @@ func runSyncCommand(cmd *cobra.Command, args []string) error {
 		cfg = config.GetDefaultConfig()
 	}
 
-	// The optional positional arg can be a source name ("gmail_work") or a
-	// source type alias ("gmail", "drive"). It overrides --source when present.
-	if len(args) == 1 && syncSourceName == "" {
-		syncSourceName = resolveSyncPositionalArg(cfg, args[0])
+	// The optional positional arg can be a source name ("gmail_work") or a source
+	// type alias ("gmail", "drive"). Resolve into a local to avoid mutating the
+	// flag-backed global (which persists across in-process invocations).
+	resolvedSource := syncSourceName
+	if len(args) == 1 && resolvedSource == "" {
+		resolvedSource = resolveSyncPositionalArg(cfg, args[0])
 	}
 
 	// Determine which sources to sync.
-	// syncSourceName may be a source name ("gmail_work") or a canonical type
+	// resolvedSource may be a source name ("gmail_work") or a canonical type
 	// ("gmail", "google_drive") when set via the positional arg.
 	var sourcesToSync []string
 
 	switch {
-	case syncSourceName == "":
+	case resolvedSource == "":
 		sourcesToSync = getEnabledSources(cfg)
-	case isSourceType(syncSourceName):
+	case isSourceType(resolvedSource):
 		// Filter all enabled sources that match this canonical type.
 		for _, name := range getEnabledSources(cfg) {
-			if sc, ok := cfg.Sources[name]; ok && sc.Type == syncSourceName {
+			if sc, ok := cfg.Sources[name]; ok && sc.Type == resolvedSource {
 				sourcesToSync = append(sourcesToSync, name)
 			}
 		}
 
 		if len(sourcesToSync) == 0 {
-			return fmt.Errorf("no enabled sources of type %q found", syncSourceName)
+			return fmt.Errorf("no enabled sources of type %q found", resolvedSource)
 		}
 	default:
 		// Treat as a specific source name.
-		sourcesToSync = []string{syncSourceName}
+		sourcesToSync = []string{resolvedSource}
 	}
 
 	if len(sourcesToSync) == 0 {

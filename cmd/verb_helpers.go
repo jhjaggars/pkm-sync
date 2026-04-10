@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"pkm-sync/pkg/models"
@@ -18,6 +19,10 @@ func findSourceByType(cfg *models.Config, canonicalType, sourceName string) (str
 		sc, ok := cfg.Sources[sourceName]
 		if !ok {
 			return "", models.SourceConfig{}, fmt.Errorf("source %q not found in config", sourceName)
+		}
+
+		if !sc.Enabled {
+			return "", models.SourceConfig{}, fmt.Errorf("source %q is disabled", sourceName)
 		}
 
 		if sc.Type != canonicalType {
@@ -41,6 +46,8 @@ func findSourceByType(cfg *models.Config, canonicalType, sourceName string) (str
 	case 1:
 		return matches[0], cfg.Sources[matches[0]], nil
 	default:
+		sort.Strings(matches)
+
 		return "", models.SourceConfig{}, fmt.Errorf(
 			"multiple %q sources configured, use --source to specify one: %s",
 			canonicalType, strings.Join(matches, ", "),
