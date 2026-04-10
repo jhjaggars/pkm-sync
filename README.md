@@ -91,55 +91,86 @@ See **[CONFIGURATION.md](./CONFIGURATION.md)** for all available options.
 
 ### `sync` — primary pipeline command
 
-Sync all enabled sources in one operation.
+Sync all enabled sources in one operation. An optional positional argument filters to a source type or specific source name.
 
 ```bash
-pkm-sync sync                              # Sync all enabled sources
-pkm-sync sync --source gmail_work          # Limit to one source
+pkm-sync sync                              # All enabled sources
+pkm-sync sync gmail                        # All enabled Gmail sources
+pkm-sync sync gmail_work                   # Specific source by name
+pkm-sync sync drive --since 7d
 pkm-sync sync --target logseq --output ~/graph
-pkm-sync sync --since 7d --dry-run         # Preview without writing
-pkm-sync sync --since 7d --dry-run --format json
+pkm-sync sync --since 7d --dry-run
+pkm-sync sync gmail --dry-run --format json
 ```
+
+Source type aliases accepted: `gmail`, `drive`, `calendar`, `jira`, `slack`, `snow`/`servicenow`.
 
 Flags: `--source`, `--target`, `--output/-o`, `--since`, `--dry-run`, `--limit` (default 1000), `--format` (summary|json)
 
 ---
 
-### `gmail` — Gmail-only sync
+### `fetch` — fetch a single item
 
-Same pipeline as `sync`, filtered to Gmail sources.
+Fetch a single item by URL or source-qualified identifier and write to stdout or a file with YAML frontmatter.
 
 ```bash
-pkm-sync gmail                                    # All enabled Gmail sources
-pkm-sync gmail --source gmail_work --since today
-pkm-sync gmail --dry-run
+# URLs are auto-routed to the right source
+pkm-sync fetch "https://docs.google.com/document/d/abc123/edit"
+pkm-sync fetch "https://company.atlassian.net/browse/PROJ-123"
+
+# Source-type prefix for non-URL keys
+pkm-sync fetch jira/PROJ-123
+pkm-sync fetch drive/FILE_ID
+
+# Write markdown with frontmatter to a file or directory
+pkm-sync fetch "https://docs.google.com/document/d/abc123/edit" --output ./docs/
+pkm-sync fetch jira/PROJ-123 --output ./jira/ --format md
+
+# Include Google Doc comments as footnotes
+pkm-sync fetch "https://docs.google.com/document/d/abc123/edit" --comments
+
+# Disambiguate when multiple sources of the same type exist
+pkm-sync fetch jira/PROJ-123 --source jira_work
 ```
 
-Flags: same as `sync`
+Flags: `--source`, `--format` (txt|md|json), `--output/-o`, `--comments`
 
 ---
 
-### `drive` — Google Drive sync
+### `search` — search indexed items
 
-Same pipeline as `sync`, filtered to `google_drive` sources.
-
-```bash
-pkm-sync drive                                    # All enabled Drive sources
-pkm-sync drive --source my_drive --since 7d
-pkm-sync drive --dry-run --format json
-```
-
-Flags: same as `sync` (default `--limit` is 100)
-
-#### `drive fetch <URL>` — fetch a single doc to stdout
+Query the vector database built by `index`. An optional first argument scopes the search to a source type or specific instance.
 
 ```bash
-pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit"
-pkm-sync drive fetch "https://docs.google.com/document/d/abc123/edit" --format md
-pkm-sync drive fetch "https://docs.google.com/spreadsheets/d/xyz789/edit" --format csv
+# Semantic search across all sources
+pkm-sync search "kubernetes deployment issues"
+
+# Gmail full-text search (uses archive.db when available, falls back to vector)
+pkm-sync search gmail "meeting with alice"
+
+# Scope to a source type or specific instance
+pkm-sync search slack "deploy failed"
+pkm-sync search gmail/work_gmail "rosa boundary"
+pkm-sync search jira/jira_work "auth error"
+
+pkm-sync search "project status" --format json --limit 5
 ```
 
-Formats: `txt` (default), `md`, `html`, `csv` (spreadsheets only)
+Flags: `--limit` (default 10), `--source-name`, `--source-type`, `--format` (text|json), `--min-score`
+
+---
+
+### `index` — build vector DB for semantic search
+
+Index items into a local SQLite vector database (requires Ollama or compatible embedding provider).
+
+```bash
+pkm-sync index --source gmail_work --since 30d
+pkm-sync index --since 7d --limit 500
+pkm-sync index --reindex            # Re-index all items
+```
+
+Flags: `--source`, `--since` (default 30d), `--limit` (default 1000), `--reindex`, `--delay` (ms between embeddings), `--max-content-length`
 
 ---
 
@@ -160,78 +191,6 @@ Flags: `--start/-s`, `--end/-e`, `--format/-f` (table|json), `--include-details`
 
 ---
 
-### `index` — index into vector DB for semantic search
-
-Index Gmail threads into a local SQLite vector database (requires Ollama or compatible embedding provider).
-
-```bash
-pkm-sync index --source gmail_work --since 30d
-pkm-sync index --since 7d --limit 500
-pkm-sync index --reindex            # Re-index all threads
-```
-
-Flags: `--source`, `--since` (default 30d), `--limit` (default 1000), `--reindex`, `--delay` (ms between embeddings), `--max-content-length`
-
----
-
-### `search <query>` — semantic search
-
-Query the vector database built by `index`.
-
-```bash
-pkm-sync search "kubernetes deployment issues"
-pkm-sync search "meetings with alice" --limit 5
-pkm-sync search "project status" --source-name gmail_work --format json
-```
-
-Flags: `--limit` (default 10), `--source-name`, `--source-type`, `--format` (text|json), `--min-score`
-
----
-
-### `slack` — Slack sync
-
-Sync Slack messages to a SQLite archive with full-text search.
-
-```bash
-pkm-sync slack --source slack_work
-pkm-sync slack --source slack_work --since 7d
-pkm-sync slack --source slack_work --dry-run
-pkm-sync slack auth --workspace https://myorg.slack.com   # Authenticate
-pkm-sync slack channels                                    # List channels + starred
-```
-
-Flags: `--source`, `--since`, `--limit` (default 1000), `--dry-run`, `--db-path`
-
----
-
-### `jira` — Jira sync
-
-Sync Jira issues to PKM files.
-
-```bash
-pkm-sync jira --source jira_work
-pkm-sync jira --source jira_work --since 7d --dry-run
-```
-
-Flags: same as `sync`
-
----
-
-### `servicenow` — ServiceNow sync
-
-Sync ServiceNow tickets (RITMs, incidents, etc.) to PKM files.
-
-```bash
-pkm-sync servicenow --source snow_work
-pkm-sync servicenow --source snow_work --since 7d
-pkm-sync servicenow --source snow_work --dry-run
-pkm-sync servicenow auth --instance https://mycompany.service-now.com   # Authenticate
-```
-
-Flags: `--source`, `--since`, `--limit` (default 1000), `--dry-run`
-
----
-
 ### `configure` — interactive source configuration
 
 Connects to a source's API and presents a multi-select TUI to pick what to sync.
@@ -243,6 +202,20 @@ pkm-sync configure --type slack          # Create a new Slack source interactive
 ```
 
 Supports Slack (channels, channel groups, DMs), Gmail (labels), Google Drive (folders), Jira (projects), and Google Calendar (calendars). Shows recent-item previews alongside each option and displays a diff of added/removed items before saving.
+
+---
+
+### Legacy per-source commands
+
+`gmail`, `drive`, `jira`, `slack`, and `servicenow` are still available but deprecated. Use `pkm-sync sync <type>` instead.
+
+The `slack` and `servicenow` commands retain their `auth` subcommands for first-time authentication:
+
+```bash
+pkm-sync slack auth --workspace https://myorg.slack.com
+pkm-sync slack channels                                    # List channels + starred
+pkm-sync servicenow auth --instance https://mycompany.service-now.com
+```
 
 ---
 
