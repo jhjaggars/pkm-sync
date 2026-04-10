@@ -173,7 +173,7 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 			"source_url": sourceURL,
 			"title":      metadata.Name,
 		},
-		Tags: []string{"source/drive"},
+		Tags: []string{"source:drive"},
 	}
 
 	if len(metadata.Owners) > 0 {

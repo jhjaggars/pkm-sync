@@ -129,7 +129,7 @@ func (m *MultiSyncer) SyncAll(
 			// Apply source tag when enabled
 			if opts.SourceTags {
 				for _, item := range items {
-					item.SetTags(append(item.GetTags(), "source/"+entry.Name))
+					item.SetTags(append(item.GetTags(), "source:"+entry.Name))
 				}
 			}
 
