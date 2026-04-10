@@ -13,6 +13,10 @@ type Config struct {
 	// Target configurations
 	Targets map[string]TargetConfig `json:"targets" yaml:"targets"`
 
+	// Formatters defines named, template-based formatters that targets can
+	// reference by item type via TargetConfig.Formatters.
+	Formatters []FormatterConfig `json:"formatters,omitempty" yaml:"formatters,omitempty"`
+
 	// Transformer configurations
 	Transformers TransformConfig `json:"transformers" yaml:"transformers"`
 
@@ -170,11 +174,46 @@ type TargetConfig struct {
 	// Target type (output directory comes from SyncConfig.DefaultOutputDir)
 	Type string `json:"type" yaml:"type"`
 
+	// Formatters maps item type (e.g. "event", "thread") to a named formatter
+	// defined in the top-level Formatters slice.
+	Formatters map[string]string `json:"formatters,omitempty" yaml:"formatters,omitempty"`
+
 	// Obsidian-specific settings
 	Obsidian ObsidianTargetConfig `json:"obsidian,omitempty" yaml:"obsidian,omitempty"`
 
 	// Logseq-specific settings
 	Logseq LogseqTargetConfig `json:"logseq,omitempty" yaml:"logseq,omitempty"`
+}
+
+// FormatterSpec holds the Go template strings used by a configurable formatter.
+type FormatterSpec struct {
+	// DirectoryPattern is a Go template producing the sub-directory path under
+	// the sink's output root (e.g. "Meetings/{{.CreatedAt | formatDate \"2006\"}}").
+	// An empty string means "use the sink's default directory logic".
+	DirectoryPattern string `json:"directory_pattern" yaml:"directory_pattern"`
+
+	// FilenamePattern is a Go template producing the base filename without
+	// extension (e.g. "{{.CreatedAt | formatDate \"2006-01-02\"}} - {{.Title | sanitize}}").
+	// An empty string means "use the sink's default filename logic".
+	FilenamePattern string `json:"filename_pattern" yaml:"filename_pattern"`
+
+	// ContentTemplate is a Go template producing the full file content.
+	// An empty string means "use the sink's default content formatter".
+	ContentTemplate string `json:"content_template" yaml:"content_template"`
+}
+
+// FormatterConfig defines a named, type-scoped formatter backed by Go templates.
+type FormatterConfig struct {
+	// Name is the unique identifier used to reference this formatter from
+	// TargetConfig.Formatters (e.g. "meeting_obsidian").
+	Name string `json:"name" yaml:"name"`
+
+	// Type is the item type this formatter targets (e.g. "event", "thread",
+	// "issue").  It must match item.GetItemType() at runtime.
+	Type string `json:"type" yaml:"type"`
+
+	// Spec contains the template strings for directory, filename, and content.
+	Spec FormatterSpec `json:"spec" yaml:"spec"`
 }
 
 type ObsidianTargetConfig struct {
