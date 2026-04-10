@@ -25,16 +25,8 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "pkm-sync",
 	Short: "Synchronize data between various sources and PKM systems",
-	Long: `pkm-sync integrates data sources (Google Calendar, Gmail, Drive, etc.) 
-with Personal Knowledge Management systems (Obsidian, Logseq, etc.).
-
-Commands:
-  sync      Sync all enabled sources to PKM systems
-  gmail     Sync Gmail emails to PKM systems
-  drive     Export Google Drive documents to markdown
-  calendar  List and sync Google Calendar events
-  setup     Verify authentication configuration
-  config    Manage configuration files`,
+	Long: `pkm-sync integrates data sources (Google Calendar, Gmail, Drive, etc.)
+with Personal Knowledge Management systems (Obsidian, Logseq, etc.).`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Set up logging based on debug flag
 		if debugMode {
