@@ -175,10 +175,11 @@ func FromCalendarEvent(event *CalendarEvent) *Item {
 		CreatedAt:  event.Start, // Using start time as creation time for events
 		UpdatedAt:  event.Start, // Using start time since we don't have modified time in CalendarEvent
 		Metadata: map[string]interface{}{
-			"start_time": event.Start,
-			"end_time":   event.End,
-			"location":   event.Location,
-			"attendees":  event.Attendees,
+			"start_time":   event.Start,
+			"end_time":     event.End,
+			"location":     event.Location,
+			"attendees":    event.Attendees,
+			"my_response":  event.MyResponseStatus,
 		},
 	}
 

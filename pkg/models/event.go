@@ -3,8 +3,10 @@ package models
 import "time"
 
 type Attendee struct {
-	Email       string
-	DisplayName string
+	Email          string
+	DisplayName    string
+	ResponseStatus string // "accepted", "declined", "tentative", "needsAction"
+	Self           bool   // true if this attendee is the calendar owner
 }
 
 // GetDisplayName returns the display name if available, otherwise returns email.
@@ -26,8 +28,9 @@ type CalendarEvent struct {
 	EndTime     time.Time
 	IsAllDay    bool
 	Location    string
-	Attendees   []Attendee
-	MeetingURL  string
+	Attendees        []Attendee
+	MyResponseStatus string // The calendar owner's response: "accepted", "declined", "tentative", "needsAction"
+	MeetingURL       string
 	Attachments []CalendarAttachment
 }
 
