@@ -52,6 +52,8 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 	}
 
 	// Label filtering - use OR logic (match ANY label).
+	// Curly braces {X Y} provide OR semantics without conflicting with
+	// parentheses that may appear in label names like "docs (d/s)".
 	if len(config.Labels) > 0 {
 		var labelParts []string
 
@@ -62,7 +64,7 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 		}
 
 		if len(labelParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(labelParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(labelParts, " ")))
 		}
 	}
 
@@ -82,7 +84,7 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 		}
 
 		if len(domainParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(domainParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(domainParts, " ")))
 		}
 	}
 
@@ -97,7 +99,7 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 		}
 
 		if len(domainParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(domainParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(domainParts, " ")))
 		}
 	}
 
@@ -145,6 +147,8 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 	parts = append(parts, fmt.Sprintf("before:%s", end.Format("2006/01/02")))
 
 	// Label filtering - use OR logic (match ANY label).
+	// Curly braces {X Y} provide OR semantics without conflicting with
+	// parentheses that may appear in label names like "docs (d/s)".
 	if len(config.Labels) > 0 {
 		var labelParts []string
 
@@ -155,7 +159,7 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 		}
 
 		if len(labelParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(labelParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(labelParts, " ")))
 		}
 	}
 
@@ -175,7 +179,7 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 		}
 
 		if len(domainParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(domainParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(domainParts, " ")))
 		}
 	}
 
@@ -190,7 +194,7 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 		}
 
 		if len(domainParts) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(domainParts, " OR ")))
+			parts = append(parts, fmt.Sprintf("{%s}", strings.Join(domainParts, " ")))
 		}
 	}
 

@@ -46,12 +46,19 @@ func NewService(client *http.Client, config models.GmailSourceConfig, sourceID s
 		return nil, fmt.Errorf("unable to create Gmail service: %w", err)
 	}
 
-	return &Service{
+	s := &Service{
 		client:   client,
 		service:  gmailService,
 		config:   config,
 		sourceID: sourceID,
-	}, nil
+	}
+
+	// Resolve label IDs to query-safe names
+	if err := s.resolveLabels(); err != nil {
+		slog.Warn("Failed to resolve label IDs", "source_id", sourceID, "error", err)
+	}
+
+	return s, nil
 }
 
 // GetMessages retrieves messages based on the configured filters and time range.
@@ -836,4 +843,79 @@ func (s *Service) fetchMessagesConcurrently(messageList []*gmail.Message) ([]*gm
 		s.GetMessageWithRetry,
 		"message",
 	)
+}
+
+// isLabelID returns true if the label appears to be a user-defined label ID
+// (starts with "Label_"). System labels like INBOX, IMPORTANT, STARRED don't
+// need resolution because they work as both IDs and query names.
+func isLabelID(label string) bool {
+	return strings.HasPrefix(label, "Label_")
+}
+
+// labelNameToQuery converts a Gmail label name to the format used in query
+// strings. Gmail's label: operator only requires spaces to be replaced with
+// hyphens; slashes and parentheses must be preserved as-is.
+func labelNameToQuery(name string) string {
+	return strings.ReplaceAll(name, " ", "-")
+}
+
+// resolveLabels resolves label IDs to query-safe names by fetching the full
+// label list from Gmail API and replacing IDs in s.config.Labels with their
+// corresponding query-safe names.
+func (s *Service) resolveLabels() error {
+	if len(s.config.Labels) == 0 {
+		return nil
+	}
+
+	// Check if any labels need resolution
+	needsResolution := false
+	for _, label := range s.config.Labels {
+		if isLabelID(label) {
+			needsResolution = true
+			break
+		}
+	}
+
+	if !needsResolution {
+		return nil
+	}
+
+	// Fetch all labels from Gmail
+	labels, err := s.GetLabels()
+	if err != nil {
+		return fmt.Errorf("failed to fetch labels: %w", err)
+	}
+
+	// Build ID -> Name map
+	idToName := make(map[string]string)
+	for _, label := range labels {
+		idToName[label.Id] = label.Name
+	}
+
+	// Resolve labels in config
+	resolvedLabels := make([]string, 0, len(s.config.Labels))
+	for _, label := range s.config.Labels {
+		if isLabelID(label) {
+			// It's a label ID, try to resolve it
+			if name, found := idToName[label]; found {
+				querySafeName := labelNameToQuery(name)
+				slog.Info("Resolved label ID to query-safe name",
+					"source_id", s.sourceID,
+					"label_id", label,
+					"label_name", name,
+					"query_name", querySafeName)
+				resolvedLabels = append(resolvedLabels, querySafeName)
+			} else {
+				slog.Warn("Label ID not found in Gmail account, skipping",
+					"source_id", s.sourceID,
+					"label_id", label)
+			}
+		} else {
+			// System label or already a name, keep as-is
+			resolvedLabels = append(resolvedLabels, label)
+		}
+	}
+
+	s.config.Labels = resolvedLabels
+	return nil
 }

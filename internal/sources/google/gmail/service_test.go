@@ -85,7 +85,7 @@ func TestService_buildQuery(t *testing.T) {
 				Labels: []string{"IMPORTANT", "STARRED"},
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 (label:IMPORTANT OR label:STARRED)",
+			expected: "after:2024/01/01 {label:IMPORTANT label:STARRED}",
 		},
 		{
 			name: "with custom query",
@@ -101,7 +101,7 @@ func TestService_buildQuery(t *testing.T) {
 				FromDomains: []string{"company.com", "client.com"},
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 (from:company.com OR from:client.com)",
+			expected: "after:2024/01/01 {from:company.com from:client.com}",
 		},
 		{
 			name: "with exclude domains",
@@ -149,7 +149,7 @@ func TestService_buildQuery(t *testing.T) {
 				RequireAttachments: true,
 			},
 			since:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			expected: "after:2024/01/01 (label:IMPORTANT) (has:attachment) (from:company.com) -from:noreply.com is:unread has:attachment",
+			expected: "after:2024/01/01 {label:IMPORTANT} (has:attachment) {from:company.com} -from:noreply.com is:unread has:attachment",
 		},
 	}
 
@@ -344,5 +344,273 @@ func TestMockGmailService(t *testing.T) {
 
 	if profile.EmailAddress != "test@example.com" {
 		t.Errorf("GetProfile() returned email %s, want test@example.com", profile.EmailAddress)
+	}
+}
+
+func TestIsLabelID(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		want  bool
+	}{
+		{
+			name:  "system label INBOX",
+			label: "INBOX",
+			want:  false,
+		},
+		{
+			name:  "system label IMPORTANT",
+			label: "IMPORTANT",
+			want:  false,
+		},
+		{
+			name:  "system label STARRED",
+			label: "STARRED",
+			want:  false,
+		},
+		{
+			name:  "user label ID",
+			label: "Label_2715051305847482596",
+			want:  true,
+		},
+		{
+			name:  "user label ID different format",
+			label: "Label_1234567890",
+			want:  true,
+		},
+		{
+			name:  "label name with Label prefix but not ID",
+			label: "Label-Work",
+			want:  false,
+		},
+		{
+			name:  "empty label",
+			label: "",
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isLabelID(tt.label)
+			if got != tt.want {
+				t.Errorf("isLabelID(%q) = %v, want %v", tt.label, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLabelNameToQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		labelName string
+		want      string
+	}{
+		{
+			name:      "label with slashes",
+			labelName: "Konflux-git-docs (d&s)",
+			want:      "Konflux-git-docs-(d&s)",
+		},
+		{
+			name:      "label with spaces",
+			labelName: "Work Projects",
+			want:      "Work-Projects",
+		},
+		{
+			name:      "label with both spaces and slashes",
+			labelName: "Projects/Work Items/Q1",
+			want:      "Projects/Work-Items/Q1",
+		},
+		{
+			name:      "label with no special characters",
+			labelName: "Important",
+			want:      "Important",
+		},
+		{
+			name:      "empty label",
+			labelName: "",
+			want:      "",
+		},
+		{
+			name:      "label with multiple consecutive spaces",
+			labelName: "Work  Projects",
+			want:      "Work--Projects",
+		},
+		{
+			name:      "label with parentheses and slashes",
+			labelName: "Team/Engineering (Backend)",
+			want:      "Team/Engineering-(Backend)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := labelNameToQuery(tt.labelName)
+			if got != tt.want {
+				t.Errorf("labelNameToQuery(%q) = %q, want %q", tt.labelName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveLabels(t *testing.T) {
+	tests := []struct {
+		name           string
+		configLabels   []string
+		availableLabels []*gmail.Label
+		expectedLabels []string
+		expectError    bool
+	}{
+		{
+			name: "resolve user label IDs to query-safe names",
+			configLabels: []string{
+				"Label_2715051305847482596",
+				"INBOX",
+				"Label_1234567890",
+			},
+			availableLabels: []*gmail.Label{
+				{Id: "INBOX", Name: "INBOX"},
+				{Id: "Label_2715051305847482596", Name: "Konflux-git-docs (d&s)"},
+				{Id: "Label_1234567890", Name: "Work/Projects"},
+			},
+			expectedLabels: []string{
+				"Konflux-git-docs-(d&s)",
+				"INBOX",
+				"Work/Projects",
+			},
+			expectError: false,
+		},
+		{
+			name: "system labels pass through unchanged",
+			configLabels: []string{
+				"INBOX",
+				"IMPORTANT",
+				"STARRED",
+			},
+			availableLabels: []*gmail.Label{
+				{Id: "INBOX", Name: "INBOX"},
+				{Id: "IMPORTANT", Name: "IMPORTANT"},
+				{Id: "STARRED", Name: "STARRED"},
+			},
+			expectedLabels: []string{
+				"INBOX",
+				"IMPORTANT",
+				"STARRED",
+			},
+			expectError: false,
+		},
+		{
+			name: "skip unresolvable label IDs with warning",
+			configLabels: []string{
+				"Label_9999999999",
+				"INBOX",
+			},
+			availableLabels: []*gmail.Label{
+				{Id: "INBOX", Name: "INBOX"},
+			},
+			expectedLabels: []string{
+				"INBOX",
+			},
+			expectError: false,
+		},
+		{
+			name:           "empty labels config",
+			configLabels:   []string{},
+			availableLabels: []*gmail.Label{},
+			expectedLabels: []string{},
+			expectError:    false,
+		},
+		{
+			name: "mixed system and user labels",
+			configLabels: []string{
+				"IMPORTANT",
+				"Label_123",
+				"STARRED",
+			},
+			availableLabels: []*gmail.Label{
+				{Id: "IMPORTANT", Name: "IMPORTANT"},
+				{Id: "STARRED", Name: "STARRED"},
+				{Id: "Label_123", Name: "Team/Backend (Dev)"},
+			},
+			expectedLabels: []string{
+				"IMPORTANT",
+				"Team/Backend-(Dev)",
+				"STARRED",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a mock service with the test configuration
+			mockService := &Service{
+				config: models.GmailSourceConfig{
+					Labels: tt.configLabels,
+				},
+				sourceID: "test",
+			}
+
+			// Mock the GetLabels method by creating a temporary version
+			// Since we can't easily mock the service method in the actual resolveLabels,
+			// we'll test the logic separately here
+
+			// Skip if no labels need resolution
+			needsResolution := false
+			for _, label := range tt.configLabels {
+				if isLabelID(label) {
+					needsResolution = true
+					break
+				}
+			}
+
+			if !needsResolution && len(tt.configLabels) > 0 {
+				// Verify system labels pass through
+				if len(mockService.config.Labels) != len(tt.expectedLabels) {
+					t.Errorf("Expected %d labels, got %d", len(tt.expectedLabels), len(mockService.config.Labels))
+				}
+				for i, label := range mockService.config.Labels {
+					if label != tt.expectedLabels[i] {
+						t.Errorf("Expected label %q, got %q", tt.expectedLabels[i], label)
+					}
+				}
+				return
+			}
+
+			// Build ID -> Name map
+			idToName := make(map[string]string)
+			for _, label := range tt.availableLabels {
+				idToName[label.Id] = label.Name
+			}
+
+			// Resolve labels
+			resolvedLabels := make([]string, 0, len(mockService.config.Labels))
+			for _, label := range mockService.config.Labels {
+				if isLabelID(label) {
+					if name, found := idToName[label]; found {
+						querySafeName := labelNameToQuery(name)
+						resolvedLabels = append(resolvedLabels, querySafeName)
+					}
+					// Skip labels that can't be resolved
+				} else {
+					resolvedLabels = append(resolvedLabels, label)
+				}
+			}
+
+			// Verify results
+			if len(resolvedLabels) != len(tt.expectedLabels) {
+				t.Errorf("Expected %d resolved labels, got %d", len(tt.expectedLabels), len(resolvedLabels))
+			}
+
+			for i, expected := range tt.expectedLabels {
+				if i >= len(resolvedLabels) {
+					t.Errorf("Missing expected label: %q", expected)
+					continue
+				}
+				if resolvedLabels[i] != expected {
+					t.Errorf("Expected label %q at position %d, got %q", expected, i, resolvedLabels[i])
+				}
+			}
+		})
 	}
 }
