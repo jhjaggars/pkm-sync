@@ -184,7 +184,10 @@ func isDriveTemporaryError(err error) bool {
 // GetFileMetadata retrieves metadata for a Google Drive file.
 func (s *Service) GetFileMetadata(fileID string) (*models.DriveFile, error) {
 	raw, err := s.executeWithRetry(func() (interface{}, error) {
-		return s.client.Files.Get(fileID).Fields("id,name,mimeType,webViewLink,modifiedTime,owners").Do()
+		return s.client.Files.Get(fileID).
+			SupportsAllDrives(true).
+			Fields("id,name,mimeType,webViewLink,modifiedTime,owners").
+			Do()
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve file metadata: %w", err)
@@ -261,7 +264,7 @@ func (s *Service) ExportDocAsMarkdown(fileID string, outputPath string) error {
 // IsGoogleDocByID checks if a file ID represents a Google Doc.
 func (s *Service) IsGoogleDocByID(fileID string) bool {
 	raw, err := s.executeWithRetry(func() (interface{}, error) {
-		return s.client.Files.Get(fileID).Fields("mimeType").Do()
+		return s.client.Files.Get(fileID).SupportsAllDrives(true).Fields("mimeType").Do()
 	})
 	if err != nil {
 		return false
