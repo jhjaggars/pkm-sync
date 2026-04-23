@@ -248,13 +248,17 @@ func (s *SlackSource) fetchChannel(ch SlackChannel, oldest string, maxMessages i
 		}
 
 		// Apply min_length filter only to top-level messages, not replies.
-		content := ExtractMessageText(msg)
+		userResolver := func(userID string) string {
+			return s.userCache.ResolveUser(userID, s.client)
+		}
+
+		content := ExtractMessageText(msg, userResolver)
 		if s.cfg.MinLength > 0 && len(strings.TrimSpace(content)) < s.cfg.MinLength {
 			continue
 		}
 
 		author := resolveAuthor(msg, s.userCache, s.client)
-		item := FromSlackMessage(msg, ch.ID, channelName, s.cfg.WorkspaceURL, author, false)
+		item := FromSlackMessage(msg, ch.ID, channelName, s.cfg.WorkspaceURL, author, false, userResolver)
 
 		// Tag DMs and group DMs additionally.
 		if ch.IsIM {
@@ -292,13 +296,17 @@ func (s *SlackSource) fetchReplies(ch SlackChannel, msg *RawMessage, channelName
 
 	items := make([]models.FullItem, 0, len(replies))
 
+	userResolver := func(userID string) string {
+		return s.userCache.ResolveUser(userID, s.client)
+	}
+
 	for j := range replies {
 		if replies[j].Ts == msg.Ts {
 			continue // skip parent included in reply list
 		}
 
 		replyAuthor := resolveAuthor(&replies[j], s.userCache, s.client)
-		replyItem := FromSlackMessage(&replies[j], ch.ID, channelName, s.cfg.WorkspaceURL, replyAuthor, true)
+		replyItem := FromSlackMessage(&replies[j], ch.ID, channelName, s.cfg.WorkspaceURL, replyAuthor, true, userResolver)
 
 		if ch.IsIM {
 			replyItem.Tags = append(replyItem.Tags, fmt.Sprintf("dm:%s", channelName))
