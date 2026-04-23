@@ -10,40 +10,89 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// UserResolver is a function that resolves Slack user IDs to display names.
+type UserResolver func(userID string) string
+
+// processRichTextElement converts a single rich_text subelement to text.
+func processRichTextElement(sub map[string]any, userResolver UserResolver) string {
+	subType, _ := sub["type"].(string)
+
+	switch subType {
+	case "text":
+		if text, ok := sub["text"].(string); ok && text != "" {
+			return text
+		}
+
+	case "user":
+		if userID, ok := sub["user_id"].(string); ok && userID != "" {
+			displayName := userID
+			if userResolver != nil {
+				displayName = userResolver(userID)
+			}
+
+			return "@" + displayName
+		}
+
+	case "link":
+		url, hasURL := sub["url"].(string)
+		linkText, hasText := sub["text"].(string)
+
+		if hasText && linkText != "" {
+			return fmt.Sprintf("%s (%s)", linkText, url)
+		} else if hasURL && url != "" {
+			return url
+		}
+
+	case "channel":
+		if channelID, ok := sub["channel_id"].(string); ok && channelID != "" {
+			return "#" + channelID
+		}
+
+	case "emoji":
+		if name, ok := sub["name"].(string); ok && name != "" {
+			return ":" + name + ":"
+		}
+	}
+
+	return ""
+}
+
 // ExtractMessageText walks rich_text blocks or falls back to the text field.
-func ExtractMessageText(msg *RawMessage) string {
-	if len(msg.Blocks) > 0 {
-		var texts []string
+// The userResolver parameter is used to resolve user mentions; if nil, raw user IDs are used.
+func ExtractMessageText(msg *RawMessage, userResolver UserResolver) string {
+	if len(msg.Blocks) == 0 {
+		return msg.Text
+	}
 
-		for _, blockRaw := range msg.Blocks {
-			var block map[string]any
-			if err := json.Unmarshal(blockRaw, &block); err != nil {
-				continue
-			}
+	var texts []string
 
-			if block["type"] != "rich_text" {
-				continue
-			}
+	for _, blockRaw := range msg.Blocks {
+		var block map[string]any
+		if err := json.Unmarshal(blockRaw, &block); err != nil {
+			continue
+		}
 
-			elements, _ := block["elements"].([]any)
+		if block["type"] != "rich_text" {
+			continue
+		}
 
-			for _, elemRaw := range elements {
-				elem, _ := elemRaw.(map[string]any)
-				subElements, _ := elem["elements"].([]any)
+		elements, _ := block["elements"].([]any)
 
-				for _, subRaw := range subElements {
-					sub, _ := subRaw.(map[string]any)
+		for _, elemRaw := range elements {
+			elem, _ := elemRaw.(map[string]any)
+			subElements, _ := elem["elements"].([]any)
 
-					if text, ok := sub["text"].(string); ok && text != "" {
-						texts = append(texts, text)
-					}
+			for _, subRaw := range subElements {
+				sub, _ := subRaw.(map[string]any)
+				if text := processRichTextElement(sub, userResolver); text != "" {
+					texts = append(texts, text)
 				}
 			}
 		}
+	}
 
-		if len(texts) > 0 {
-			return strings.Join(texts, "")
-		}
+	if len(texts) > 0 {
+		return strings.Join(texts, "")
 	}
 
 	return msg.Text
@@ -75,10 +124,11 @@ func messageURL(workspaceURL, channelID, ts string) string {
 
 // FromSlackMessage converts a raw Slack message into an individual *models.BasicItem.
 // isReply indicates whether the message is a thread reply (as opposed to a top-level message).
+// userResolver is used to resolve user mentions in rich_text; pass nil to use raw user IDs.
 func FromSlackMessage(
-	msg *RawMessage, channelID, channelName, workspaceURL, author string, isReply bool,
+	msg *RawMessage, channelID, channelName, workspaceURL, author string, isReply bool, userResolver UserResolver,
 ) *models.BasicItem {
-	content := ExtractMessageText(msg)
+	content := ExtractMessageText(msg, userResolver)
 
 	// Build title: first 80 chars of content, or fallback to channel name.
 	title := content
