@@ -90,7 +90,7 @@ func (p *DriveProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 
 	sections := []DiscoverySection{
 		{
-			Name:        "Folders",
+			Name:        sectionNameFolders,
 			Description: "Select the Drive folders you want to sync (leave empty to use root)",
 			Options:     folderOpts,
 		},
@@ -131,7 +131,7 @@ func (p *DriveProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 // ApplySelections implements DiscoveryProvider. It updates the SourceConfig in-place.
 func (p *DriveProvider) ApplySelections(cfg *models.SourceConfig, sectionName string, selectedIDs []string) {
 	switch sectionName {
-	case "Folders":
+	case sectionNameFolders:
 		cfg.Drive.FolderIDs = selectedIDs
 	case "Workspace Types":
 		cfg.Drive.WorkspaceTypes = selectedIDs

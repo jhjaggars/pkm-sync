@@ -7,6 +7,9 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// assigneeMe is the JQL keyword that refers to the currently authenticated user.
+const assigneeMe = "me"
+
 // buildJQL constructs a JQL query string from the source config.
 func buildJQL(cfg models.JiraSourceConfig, since time.Time, currentUser string) string {
 	var parts []string
@@ -55,7 +58,7 @@ func buildStructuredJQL(cfg models.JiraSourceConfig, currentUser string) []strin
 		parts = append(parts, "status IN ("+strings.Join(quoted, ", ")+")")
 	}
 
-	if cfg.AssigneeFilter == "me" && currentUser != "" {
+	if cfg.AssigneeFilter == assigneeMe && currentUser != "" {
 		parts = append(parts, `assignee = "`+currentUser+`"`)
 	}
 

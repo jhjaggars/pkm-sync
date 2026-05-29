@@ -17,15 +17,15 @@ const defaultQuery = "assigned_to=javascript:gs.getUserID()^ORopened_by=javascri
 
 // scReqItemFields are the fields fetched for sc_req_item records.
 var scReqItemFields = []string{
-	"sys_id", "number", "short_description", "description", "state",
-	"priority", "assignment_group", "assigned_to", "opened_by",
+	fieldSysID, fieldNumber, "short_description", "description", fieldState,
+	fieldPriority, fieldAssignmentGroup, fieldAssignedTo, fieldOpenedBy,
 	"opened_at", "sys_updated_on", "comments", "approval", "cat_item",
 }
 
 // genericFields are the fields fetched for other table types.
 var genericFields = []string{
-	"sys_id", "number", "short_description", "description", "state",
-	"priority", "assignment_group", "assigned_to", "opened_by",
+	fieldSysID, fieldNumber, "short_description", "description", fieldState,
+	fieldPriority, fieldAssignmentGroup, fieldAssignedTo, fieldOpenedBy,
 	"opened_at", "sys_updated_on", "comments",
 }
 

@@ -296,8 +296,8 @@ func (c *Client) FindChannel(name string) (*SlackChannel, error) {
 // GetHistory fetches paginated message history for a channel.
 func (c *Client) GetHistory(channelID, oldest, latest, cursor string, limit int) ([]RawMessage, string, error) {
 	params := map[string]string{
-		"channel": channelID,
-		"limit":   fmt.Sprintf("%d", limit),
+		metaKeyChannel: channelID,
+		"limit":        fmt.Sprintf("%d", limit),
 	}
 
 	if oldest != "" {
@@ -340,8 +340,8 @@ func (c *Client) GetHistory(channelID, oldest, latest, cursor string, limit int)
 // GetReplies fetches all replies for a thread.
 func (c *Client) GetReplies(channelID, threadTS string) ([]RawMessage, error) {
 	result, err := c.CallAPI("conversations.replies", map[string]string{
-		"channel": channelID,
-		"ts":      threadTS,
+		metaKeyChannel: channelID,
+		"ts":           threadTS,
 	})
 	if err != nil {
 		return nil, err

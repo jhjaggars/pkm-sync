@@ -26,7 +26,7 @@ func NewFilterTransformer() *FilterTransformer {
 }
 
 func (t *FilterTransformer) Name() string {
-	return "filter"
+	return transformerNameFilter
 }
 
 func (t *FilterTransformer) Configure(config map[string]interface{}) error {

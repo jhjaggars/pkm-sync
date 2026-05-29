@@ -311,7 +311,7 @@ func (s *Service) GetRecentSubjects(query string, limit int) ([]string, error) {
 		}
 
 		for _, h := range msg.Payload.Headers {
-			if h.Name == "Subject" {
+			if h.Name == headerSubject {
 				subjects = append(subjects, h.Value)
 
 				break

@@ -10,6 +10,12 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// Source and metadata key constants for Slack items.
+const (
+	sourceTypeSlack = "slack"
+	metaKeyChannel  = "channel"
+)
+
 // ExtractMessageText walks rich_text blocks or falls back to the text field.
 func ExtractMessageText(msg *RawMessage) string {
 	if len(msg.Blocks) > 0 {
@@ -97,7 +103,7 @@ func FromSlackMessage(
 
 	ts := tsToTime(msg.Ts)
 
-	tags := []string{"slack", fmt.Sprintf("channel:%s", channelName)}
+	tags := []string{sourceTypeSlack, fmt.Sprintf("channel:%s", channelName)}
 
 	url := messageURL(workspaceURL, channelID, msg.Ts)
 	links := []models.Link{
@@ -125,7 +131,7 @@ func FromSlackMessage(
 		ID:          fmt.Sprintf("slack_%s_%s", channelID, msg.Ts),
 		Title:       title,
 		Content:     content,
-		SourceType:  "slack",
+		SourceType:  sourceTypeSlack,
 		ItemType:    itemType,
 		CreatedAt:   ts,
 		UpdatedAt:   ts,
@@ -133,7 +139,7 @@ func FromSlackMessage(
 		Links:       links,
 		Attachments: []models.Attachment{},
 		Metadata: map[string]any{
-			"channel":        channelName,
+			metaKeyChannel:   channelName,
 			"channel_id":     channelID,
 			"workspace":      workspaceURL,
 			"author":         author,

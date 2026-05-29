@@ -122,7 +122,7 @@ func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 
 	// Attachment requirement.
 	if config.RequireAttachments {
-		parts = append(parts, "has:attachment")
+		parts = append(parts, gmailQueryHasAttach)
 	}
 
 	finalQuery := strings.Join(parts, " ")
@@ -216,7 +216,7 @@ func buildQueryWithRange(config models.GmailSourceConfig, start, end time.Time) 
 
 	// Attachment requirement.
 	if config.RequireAttachments {
-		parts = append(parts, "has:attachment")
+		parts = append(parts, gmailQueryHasAttach)
 	}
 
 	return strings.Join(parts, " ")
@@ -310,7 +310,7 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 	// Add criteria from map.
 	for key, value := range criteria {
 		switch key {
-		case "from":
+		case metaKeyFrom:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("from:%s", v))
 			}
@@ -318,13 +318,13 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("to:%s", v))
 			}
-		case "subject":
+		case metaKeySubject:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("subject:%s", v))
 			}
-		case "has_attachment":
+		case criteriaKeyHasAttachment:
 			if v, ok := value.(bool); ok && v {
-				parts = append(parts, "has:attachment")
+				parts = append(parts, gmailQueryHasAttach)
 			}
 		case "is_important":
 			if v, ok := value.(bool); ok && v {
@@ -334,11 +334,11 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 			if v, ok := value.(bool); ok && v {
 				parts = append(parts, "is:starred")
 			}
-		case "newer_than":
+		case criteriaKeyNewerThan:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("newer_than:%s", v))
 			}
-		case "older_than":
+		case criteriaKeyOlderThan:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("older_than:%s", v))
 			}

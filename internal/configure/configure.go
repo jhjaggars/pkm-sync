@@ -74,6 +74,15 @@ const (
 	newSourceSentinel = "::new::"
 )
 
+// Section name constants used in DiscoverySection and ApplySelections dispatch.
+const (
+	sectionNameChannels   = "Channels"
+	sectionNameFolders    = "Folders"
+	sectionNameProjects   = "Projects"
+	sectionNameIssueTypes = "Issue Types"
+	sectionNameStatuses   = "Statuses"
+)
+
 // getProvider returns the DiscoveryProvider for the given source type.
 func getProvider(sourceType string) (DiscoveryProvider, error) {
 	switch sourceType {
@@ -204,8 +213,8 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 	for i := range sections {
 		section := &sections[i]
 
-		if (section.Name == "Channels" && sourceType == sourceTypeSlack) ||
-			(section.Name == "Folders" && sourceType == sourceTypeDrive) {
+		if (section.Name == sectionNameChannels && sourceType == sourceTypeSlack) ||
+			(section.Name == sectionNameFolders && sourceType == sourceTypeDrive) {
 			model := NewSortableMultiSelect(section.Name, section.Description, section.Options)
 			p := tea.NewProgram(model, tea.WithAltScreen())
 

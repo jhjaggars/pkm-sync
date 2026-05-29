@@ -6,7 +6,9 @@ import (
 )
 
 const (
-	safeFilename = "safe-filename"
+	safeFilename        = "safe-filename"
+	defaultFilename     = "default-filename"
+	emailThreadFallback = "email-thread"
 )
 
 // SanitizeFilename sanitizes a string to be safe for use as a filename
@@ -14,7 +16,7 @@ const (
 func SanitizeFilename(filename string) string {
 	// Input validation
 	if filename == "" {
-		return "default-filename"
+		return defaultFilename
 	}
 
 	// Optimized string replacements using strings.Replacer for better performance
@@ -102,7 +104,7 @@ func SanitizeFilename(filename string) string {
 
 	// Final validation - ensure we have a valid filename
 	if cleaned == "" || cleaned == "-" {
-		cleaned = safeFilename
+		cleaned = defaultFilename
 	}
 
 	return cleaned
@@ -116,7 +118,7 @@ func SanitizeThreadSubject(subject, threadID string) string {
 			return "email-thread-" + SanitizeFilename(threadID)
 		}
 
-		return "email-thread"
+		return emailThreadFallback
 	}
 
 	// Clean up subject line (remove Re:, Fwd:, etc.)
@@ -128,7 +130,7 @@ func SanitizeThreadSubject(subject, threadID string) string {
 	sanitized := SanitizeFilename(cleaned)
 
 	// If sanitization results in a generic name and we have a thread ID, append it
-	if (sanitized == safeFilename || sanitized == "default-filename" || sanitized == "email-thread") && threadID != "" {
+	if (sanitized == safeFilename || sanitized == defaultFilename || sanitized == emailThreadFallback) && threadID != "" {
 		sanitized = sanitized + "-" + SanitizeFilename(threadID)
 	}
 

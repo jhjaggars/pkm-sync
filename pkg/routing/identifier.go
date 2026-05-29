@@ -3,6 +3,11 @@ package routing
 
 import "strings"
 
+// Canonical source type string constants used in the alias map.
+const (
+	canonicalServiceNow = "servicenow"
+)
+
 // ParsedIdentifier is the result of parsing a `fetch` or `search` argument.
 // The argument can be a bare URL, a source-qualified key ("jira/PROJ-123"), or
 // a bare key (requires --source to disambiguate).
@@ -75,8 +80,8 @@ var sourceTypeAliases = map[string]string{
 	"gmail":      "gmail",
 	"jira":       "jira",
 	"slack":      "slack",
-	"snow":       "servicenow",
-	"servicenow": "servicenow",
+	"snow":       canonicalServiceNow,
+	"servicenow": canonicalServiceNow,
 }
 
 // CanonicalSourceType converts a short alias (e.g. "drive") to the canonical

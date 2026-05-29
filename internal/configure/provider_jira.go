@@ -73,7 +73,7 @@ func (p *JiraProvider) DiscoverySections(currentConfig models.SourceConfig) ([]D
 
 	sections := []DiscoverySection{
 		{
-			Name:        "Projects",
+			Name:        sectionNameProjects,
 			Description: "Select the Jira projects you want to sync",
 			Options:     projectOpts,
 		},
@@ -108,7 +108,7 @@ func (p *JiraProvider) issueTypeSection(projectKey string, configured []string) 
 	if err != nil {
 		// Non-fatal: return an empty section rather than failing the whole flow.
 		return DiscoverySection{
-			Name:        "Issue Types",
+			Name:        sectionNameIssueTypes,
 			Description: fmt.Sprintf("Could not load issue types for project %s: %v", projectKey, err),
 			Options:     nil,
 		}
@@ -124,7 +124,7 @@ func (p *JiraProvider) issueTypeSection(projectKey string, configured []string) 
 	}
 
 	return DiscoverySection{
-		Name:        "Issue Types",
+		Name:        sectionNameIssueTypes,
 		Description: fmt.Sprintf("Select issue types to include (from project %s; leave empty for all)", projectKey),
 		Options:     opts,
 	}
@@ -140,7 +140,7 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 	statuses, err := p.source.ListStatuses(projectKey)
 	if err != nil {
 		return DiscoverySection{
-			Name:        "Statuses",
+			Name:        sectionNameStatuses,
 			Description: fmt.Sprintf("Could not load statuses for project %s: %v", projectKey, err),
 			Options:     nil,
 		}
@@ -156,7 +156,7 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 	}
 
 	return DiscoverySection{
-		Name:        "Statuses",
+		Name:        sectionNameStatuses,
 		Description: fmt.Sprintf("Select statuses to include (from project %s; leave empty for all)", projectKey),
 		Options:     opts,
 	}
@@ -165,11 +165,11 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 // ApplySelections implements DiscoveryProvider. It updates the SourceConfig in-place.
 func (p *JiraProvider) ApplySelections(cfg *models.SourceConfig, sectionName string, selectedIDs []string) {
 	switch sectionName {
-	case "Projects":
+	case sectionNameProjects:
 		cfg.Jira.ProjectKeys = selectedIDs
-	case "Issue Types":
+	case sectionNameIssueTypes:
 		cfg.Jira.IssueTypes = selectedIDs
-	case "Statuses":
+	case sectionNameStatuses:
 		cfg.Jira.Statuses = selectedIDs
 	}
 }

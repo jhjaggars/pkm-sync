@@ -219,7 +219,7 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 	var sb strings.Builder
 
 	for key, value := range metadata {
-		if key == "attendees" {
+		if key == metaKeyAttendees {
 			sb.WriteString(o.formatAttendees(value))
 		} else if arr, ok := value.([]string); ok {
 			fmt.Fprintf(&sb, "%s:\n", key)
@@ -249,7 +249,7 @@ func (o *obsidianFormatter) formatAttendees(attendeesValue any) string {
 			return ""
 		}
 
-		sb.WriteString("attendees:\n")
+		sb.WriteString(metaKeyAttendees + ":\n")
 
 		for _, attendee := range attendees {
 			fmt.Fprintf(&sb, "  - \"[[%s]]\"\n", attendee.GetDisplayName())
@@ -259,7 +259,7 @@ func (o *obsidianFormatter) formatAttendees(attendeesValue any) string {
 			return ""
 		}
 
-		sb.WriteString("attendees:\n")
+		sb.WriteString(metaKeyAttendees + ":\n")
 
 		for _, attendee := range attendees {
 			if attendeeMap, ok := attendee.(map[string]any); ok {
@@ -279,7 +279,7 @@ func (o *obsidianFormatter) formatAttendees(attendeesValue any) string {
 			}
 		}
 	default:
-		fmt.Fprintf(&sb, "attendees: %v\n", attendeesValue)
+		fmt.Fprintf(&sb, "%s: %v\n", metaKeyAttendees, attendeesValue)
 	}
 
 	return sb.String()

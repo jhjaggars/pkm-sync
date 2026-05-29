@@ -12,6 +12,20 @@ import (
 
 const ConfigFileName = "config.yaml"
 
+// Source type constants used throughout config validation and defaults.
+const (
+	sourceTypeGoogleCalendar = "google_calendar"
+	sourceTypeGoogleDrive    = "google_drive"
+	sourceTypeGmail          = "gmail"
+	sourceTypeLogseq         = "logseq"
+	sourceTypeObsidian       = "obsidian"
+)
+
+// Export format constants for google_drive validation.
+const (
+	exportFormatHTML = "html"
+)
+
 // LoadConfig loads configuration from the standard search paths.
 func LoadConfig() (*models.Config, error) {
 	// Search for config file in order:
@@ -59,17 +73,17 @@ func SaveConfig(cfg *models.Config) error {
 func GetDefaultConfig() *models.Config {
 	return &models.Config{
 		Sync: models.SyncConfig{
-			EnabledSources:   []string{"google_calendar"},
-			DefaultTarget:    "obsidian",
+			EnabledSources:   []string{sourceTypeGoogleCalendar},
+			DefaultTarget:    sourceTypeObsidian,
 			DefaultOutputDir: "./output",
 			DefaultSince:     "7d",
 			SourceTags:       false,
 			SourceSchedules:  make(map[string]string),
 		},
 		Sources: map[string]models.SourceConfig{
-			"google_calendar": {
+			sourceTypeGoogleCalendar: {
 				Enabled: true,
-				Type:    "google_calendar",
+				Type:    sourceTypeGoogleCalendar,
 				Google: models.GoogleSourceConfig{
 					CalendarID:        "primary",
 					DownloadDocs:      true,
@@ -82,7 +96,7 @@ func GetDefaultConfig() *models.Config {
 			},
 			"google_meetings": {
 				Enabled: true,
-				Type:    "google_calendar",
+				Type:    sourceTypeGoogleCalendar,
 				Google: models.GoogleSourceConfig{
 					CalendarID:        "primary",
 					DownloadDocs:      true,
@@ -93,9 +107,9 @@ func GetDefaultConfig() *models.Config {
 					DocFormats:        []string{},
 				},
 			},
-			"google_drive": {
+			sourceTypeGoogleDrive: {
 				Enabled: false,
-				Type:    "google_drive",
+				Type:    sourceTypeGoogleDrive,
 				Drive: models.DriveSourceConfig{
 					Name:            "My Drive",
 					Description:     "Sync Google Docs, Sheets, and Slides from Google Drive",
@@ -107,8 +121,8 @@ func GetDefaultConfig() *models.Config {
 			},
 		},
 		Targets: map[string]models.TargetConfig{
-			"obsidian": {
-				Type: "obsidian",
+			sourceTypeObsidian: {
+				Type: sourceTypeObsidian,
 				Obsidian: models.ObsidianTargetConfig{
 					DefaultFolder:      "Calendar",
 					IncludeFrontmatter: true,
@@ -116,8 +130,8 @@ func GetDefaultConfig() *models.Config {
 					CustomFields:       []string{},
 				},
 			},
-			"logseq": {
-				Type: "logseq",
+			sourceTypeLogseq: {
+				Type: sourceTypeLogseq,
 				Logseq: models.LogseqTargetConfig{
 					DefaultPage:   "Calendar",
 					UseProperties: true,
@@ -294,32 +308,32 @@ func validateSourceConfig(_ string, config models.SourceConfig) error {
 
 	// Validate type-specific configurations
 	switch config.Type {
-	case "google_calendar":
+	case sourceTypeGoogleCalendar:
 		if config.Google.CalendarID == "" {
 			return fmt.Errorf("calendar_id is required for google_calendar sources")
 		}
-	case "gmail":
+	case sourceTypeGmail:
 		if config.Gmail.Name == "" {
 			return fmt.Errorf("name is required for gmail sources")
 		}
-	case "google_drive":
+	case sourceTypeGoogleDrive:
 		if config.Drive.Name == "" {
 			return fmt.Errorf("name is required for google_drive sources")
 		}
 
-		validDocFormats := map[string]bool{"md": true, "txt": true, "html": true, "": true}
+		validDocFormats := map[string]bool{"md": true, "txt": true, exportFormatHTML: true, "": true}
 		if !validDocFormats[config.Drive.DocExportFormat] {
 			return fmt.Errorf("invalid doc_export_format %q for google_drive (supported: md, txt, html)",
 				config.Drive.DocExportFormat)
 		}
 
-		validSheetFormats := map[string]bool{"csv": true, "html": true, "": true}
+		validSheetFormats := map[string]bool{"csv": true, exportFormatHTML: true, "": true}
 		if !validSheetFormats[config.Drive.SheetExportFormat] {
 			return fmt.Errorf("invalid sheet_export_format %q for google_drive (supported: csv, html)",
 				config.Drive.SheetExportFormat)
 		}
 
-		validSlideFormats := map[string]bool{"txt": true, "html": true, "": true}
+		validSlideFormats := map[string]bool{"txt": true, exportFormatHTML: true, "": true}
 		if !validSlideFormats[config.Drive.SlideExportFormat] {
 			return fmt.Errorf("invalid slide_export_format %q for google_drive (supported: txt, html)",
 				config.Drive.SlideExportFormat)
@@ -387,9 +401,9 @@ func validateTargetConfig(_ string, config models.TargetConfig) error {
 
 	// Validate supported target types
 	switch config.Type {
-	case "obsidian":
+	case sourceTypeObsidian:
 		// Obsidian-specific validations could go here
-	case "logseq":
+	case sourceTypeLogseq:
 		// Logseq-specific validations could go here
 	default:
 		return fmt.Errorf("unsupported target type: %s", config.Type)

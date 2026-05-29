@@ -31,6 +31,19 @@ const (
 	sourceTypeUnknown  = "unknown"
 )
 
+// Metadata field key constants used in content and metadata builders.
+const (
+	metaKeyFrom        = "from"
+	metaKeyTo          = "to"
+	metaKeyDateRange   = "date_range"
+	metaKeyStart       = "start"
+	metaKeyEnd         = "end"
+	metaKeyMimeType    = "mime_type"
+	metaKeyOwners      = "owners"
+	metaKeyWebViewLink = "web_view_link"
+	metaKeyAttendees   = "attendees"
+)
+
 // contentBuilder provides source-type-specific content and metadata construction for VectorSink.
 type contentBuilder interface {
 	buildContent(group *itemGroup) string
@@ -96,7 +109,7 @@ func (b *gmailBuilder) buildContent(group *itemGroup) string {
 			sb.WriteString(fmt.Sprintf("From: %s\n", from))
 		}
 
-		if to, ok := metadata["to"].(string); ok && to != "" {
+		if to, ok := metadata[metaKeyTo].(string); ok && to != "" {
 			sb.WriteString(fmt.Sprintf("To: %s\n", to))
 		}
 
@@ -130,7 +143,7 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 	for _, item := range group.messages {
 		metadata := item.GetMetadata()
 
-		for _, field := range []string{"from", "to", "cc", "bcc"} {
+		for _, field := range []string{metaKeyFrom, metaKeyTo, "cc", "bcc"} {
 			if val, ok := metadata[field].(string); ok && val != "" {
 				participantsMap[val] = true
 			}
@@ -156,12 +169,12 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 			"subject": msg.GetTitle(),
 		}
 
-		if from, ok := metadata["from"].(string); ok {
-			msgData["from"] = from
+		if from, ok := metadata[metaKeyFrom].(string); ok {
+			msgData[metaKeyFrom] = from
 		}
 
-		if to, ok := metadata["to"].(string); ok {
-			msgData["to"] = to
+		if to, ok := metadata[metaKeyTo].(string); ok {
+			msgData[metaKeyTo] = to
 		}
 
 		if cc, ok := metadata["cc"].(string); ok {
@@ -179,9 +192,9 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 		"participants":  participants,
 		"message_ids":   messageIDs,
 		"message_count": len(group.messages),
-		"date_range": map[string]string{
-			"start": group.startTime.Format(time.RFC3339),
-			"end":   group.endTime.Format(time.RFC3339),
+		metaKeyDateRange: map[string]string{
+			metaKeyStart: group.startTime.Format(time.RFC3339),
+			metaKeyEnd:   group.endTime.Format(time.RFC3339),
 		},
 		"messages": messages,
 	}
@@ -286,9 +299,9 @@ func (b *calendarBuilder) buildContent(group *itemGroup) string {
 
 func (b *calendarBuilder) buildMetadata(group *itemGroup) map[string]any {
 	result := map[string]any{
-		"date_range": map[string]string{
-			"start": group.startTime.Format(time.RFC3339),
-			"end":   group.endTime.Format(time.RFC3339),
+		metaKeyDateRange: map[string]string{
+			metaKeyStart: group.startTime.Format(time.RFC3339),
+			metaKeyEnd:   group.endTime.Format(time.RFC3339),
 		},
 	}
 
@@ -345,15 +358,15 @@ func (b *driveBuilder) buildContent(group *itemGroup) string {
 
 	metadata := item.GetMetadata()
 
-	if mimeType, ok := metadata["mime_type"].(string); ok && mimeType != "" {
+	if mimeType, ok := metadata[metaKeyMimeType].(string); ok && mimeType != "" {
 		sb.WriteString(fmt.Sprintf("Type: %s\n", mimeType))
 	}
 
-	if owners, ok := metadata["owners"].([]string); ok && len(owners) > 0 {
+	if owners, ok := metadata[metaKeyOwners].([]string); ok && len(owners) > 0 {
 		sb.WriteString(fmt.Sprintf("Owners: %s\n", strings.Join(owners, ", ")))
 	}
 
-	if webLink, ok := metadata["web_view_link"].(string); ok && webLink != "" {
+	if webLink, ok := metadata[metaKeyWebViewLink].(string); ok && webLink != "" {
 		sb.WriteString(fmt.Sprintf("Link: %s\n", webLink))
 	}
 
@@ -366,9 +379,9 @@ func (b *driveBuilder) buildContent(group *itemGroup) string {
 
 func (b *driveBuilder) buildMetadata(group *itemGroup) map[string]any {
 	result := map[string]any{
-		"date_range": map[string]string{
-			"start": group.startTime.Format(time.RFC3339),
-			"end":   group.endTime.Format(time.RFC3339),
+		metaKeyDateRange: map[string]string{
+			metaKeyStart: group.startTime.Format(time.RFC3339),
+			metaKeyEnd:   group.endTime.Format(time.RFC3339),
 		},
 	}
 
@@ -378,7 +391,7 @@ func (b *driveBuilder) buildMetadata(group *itemGroup) map[string]any {
 
 	metadata := group.messages[0].GetMetadata()
 
-	for _, key := range []string{"mime_type", "web_view_link", "owners"} {
+	for _, key := range []string{metaKeyMimeType, metaKeyWebViewLink, metaKeyOwners} {
 		if val, ok := metadata[key]; ok {
 			result[key] = val
 		}
@@ -418,9 +431,9 @@ func (b *genericBuilder) buildContent(group *itemGroup) string {
 
 func (b *genericBuilder) buildMetadata(group *itemGroup) map[string]any {
 	result := map[string]any{
-		"date_range": map[string]string{
-			"start": group.startTime.Format(time.RFC3339),
-			"end":   group.endTime.Format(time.RFC3339),
+		metaKeyDateRange: map[string]string{
+			metaKeyStart: group.startTime.Format(time.RFC3339),
+			metaKeyEnd:   group.endTime.Format(time.RFC3339),
 		},
 	}
 

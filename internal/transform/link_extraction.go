@@ -28,7 +28,7 @@ func NewLinkExtractionTransformer() *LinkExtractionTransformer {
 }
 
 func (t *LinkExtractionTransformer) Name() string {
-	return "link_extraction"
+	return transformerNameLinkExtraction
 }
 
 func (t *LinkExtractionTransformer) Configure(config map[string]interface{}) error {
@@ -197,13 +197,13 @@ func (t *LinkExtractionTransformer) ExtractLinks(content string) []models.Link {
 	links := make([]models.Link, 0, len(allMatches))
 
 	for _, match := range allMatches {
-		linkType := "external"
+		linkType := linkTypeExternal
 
 		// Determine link type based on URL
 		if t.isInternalLink(match.url) {
 			linkType = "internal"
 		} else if t.isDocumentLink(match.url) {
-			linkType = "document"
+			linkType = linkTypeDocument
 		}
 
 		links = append(links, models.Link{
@@ -302,7 +302,7 @@ func (t *LinkExtractionTransformer) isValidURL(urlStr string) bool {
 	}
 
 	// Must have a scheme (http/https)
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != backendHTTP && parsedURL.Scheme != "https" {
 		return false
 	}
 

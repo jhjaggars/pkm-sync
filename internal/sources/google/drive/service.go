@@ -482,6 +482,7 @@ const (
 	MimeTypeGoogleDoc          = "application/vnd.google-apps.document"
 	MimeTypeGoogleSheet        = "application/vnd.google-apps.spreadsheet"
 	MimeTypeGooglePresentation = "application/vnd.google-apps.presentation"
+	MimeTypeGoogleFolder       = "application/vnd.google-apps.folder"
 )
 
 // Export MIME types.
@@ -685,7 +686,7 @@ func (s *Service) ListFilesInFolder(
 	// Find subfolders
 	subfolderOpts := ListFilesOptions{
 		FolderID:            folderID,
-		MimeTypes:           []string{"application/vnd.google-apps.folder"},
+		MimeTypes:           []string{MimeTypeGoogleFolder},
 		IncludeSharedDrives: opts.IncludeSharedDrives,
 	}
 
@@ -774,7 +775,7 @@ func (s *Service) ExportAsString(
 // An empty parentID returns folders from the Drive root without a parent filter.
 func (s *Service) ListFolders(parentID string) ([]*DriveFileInfo, error) {
 	opts := ListFilesOptions{
-		MimeTypes: []string{"application/vnd.google-apps.folder"},
+		MimeTypes: []string{MimeTypeGoogleFolder},
 	}
 
 	if parentID != "" {

@@ -42,7 +42,7 @@ func NewThreadGroupingTransformer() *ThreadGroupingTransformer {
 }
 
 func (t *ThreadGroupingTransformer) Name() string {
-	return "thread_grouping"
+	return transformerNameThreadGrouping
 }
 
 func (t *ThreadGroupingTransformer) Configure(config map[string]interface{}) error {
@@ -79,7 +79,7 @@ func (t *ThreadGroupingTransformer) Transform(items []models.FullItem) ([]models
 	switch strings.ToLower(mode) {
 	case threadModeConsolidated:
 		resultLegacyItems = t.consolidateThreads(threadGroups)
-	case "summary":
+	case threadModeSummary:
 		resultLegacyItems = t.summarizeThreads(threadGroups)
 	case "individual", "":
 		// Default: return individual items

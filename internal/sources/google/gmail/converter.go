@@ -20,6 +20,36 @@ const (
 	largeThreadThreshold = 50
 )
 
+// Gmail system label constants.
+const (
+	gmailLabelImportant = "IMPORTANT"
+	gmailLabelStarred   = "STARRED"
+	gmailLabelInbox     = "INBOX"
+	gmailLabelSent      = "SENT"
+	gmailLabelDraft     = "DRAFT"
+	gmailLabelUnread    = "UNREAD"
+)
+
+// Gmail email header name constants.
+const (
+	headerSubject   = "Subject"
+	headerFrom      = "From"
+	headerTo        = "To"
+	headerDate      = "Date"
+	headerMessageID = "Message-ID"
+)
+
+// Gmail source type, metadata key, and query constants.
+const (
+	sourceTypeGmail          = "gmail"
+	metaKeySubject           = "subject"
+	metaKeyFrom              = "from"
+	gmailQueryHasAttach      = "has:attachment"
+	criteriaKeyHasAttachment = "has_attachment"
+	criteriaKeyNewerThan     = "newer_than"
+	criteriaKeyOlderThan     = "older_than"
+)
+
 // EmailRecipient represents an email recipient with name and email.
 type EmailRecipient struct {
 	Name  string `json:"name"`
@@ -60,7 +90,7 @@ func FromGmailMessageWithService(
 		ID:         msg.Id,
 		Title:      subject,
 		Content:    content,
-		SourceType: "gmail",
+		SourceType: sourceTypeGmail,
 		ItemType:   "email",
 		CreatedAt:  createdAt,
 		UpdatedAt:  createdAt, // Gmail doesn't track modifications, use creation date
@@ -105,7 +135,7 @@ func getSubject(msg *gmail.Message) string {
 	}
 
 	for _, header := range msg.Payload.Headers {
-		if strings.ToLower(header.Name) == "subject" {
+		if strings.ToLower(header.Name) == metaKeySubject {
 			return header.Value
 		}
 	}
@@ -174,7 +204,7 @@ func addBasicMetadata(item *models.Item, msg *gmail.Message) {
 
 // addRecipientMetadata extracts and adds recipient information to metadata.
 func addRecipientMetadata(item *models.Item, msg *gmail.Message) {
-	item.Metadata["from"] = extractSender(msg)
+	item.Metadata[metaKeyFrom] = extractSender(msg)
 	item.Metadata["to"] = extractRecipients(msg, "to")
 	item.Metadata["cc"] = extractRecipients(msg, "cc")
 	item.Metadata["bcc"] = extractRecipients(msg, "bcc")
@@ -196,7 +226,7 @@ func addHeaderMetadata(item *models.Item, msg *gmail.Message) {
 
 // extractSender extracts the sender information.
 func extractSender(msg *gmail.Message) EmailRecipient {
-	from := getHeader(msg, "from")
+	from := getHeader(msg, metaKeyFrom)
 
 	return parseEmailAddress(from)
 }
@@ -339,23 +369,23 @@ func buildTags(msg *gmail.Message, config models.GmailSourceConfig) []string {
 	var tags []string
 
 	// Add source identifier.
-	tags = append(tags, "gmail")
+	tags = append(tags, sourceTypeGmail)
 
 	// Add labels as tags.
 	for _, labelID := range msg.LabelIds {
 		// Convert system labels to readable tags.
 		switch labelID {
-		case "IMPORTANT":
+		case gmailLabelImportant:
 			tags = append(tags, "important")
-		case "STARRED":
+		case gmailLabelStarred:
 			tags = append(tags, "starred")
-		case "UNREAD":
+		case gmailLabelUnread:
 			tags = append(tags, "unread")
-		case "INBOX":
+		case gmailLabelInbox:
 			tags = append(tags, "inbox")
-		case "SENT":
+		case gmailLabelSent:
 			tags = append(tags, "sent")
-		case "DRAFT":
+		case gmailLabelDraft:
 			tags = append(tags, "draft")
 		default:
 			// Use label as-is for custom labels.
@@ -384,7 +414,7 @@ func matchesCondition(msg *gmail.Message, condition string) bool {
 	condition = strings.ToLower(condition)
 
 	if strings.HasPrefix(condition, "from:") {
-		fromEmail := getHeader(msg, "from")
+		fromEmail := getHeader(msg, metaKeyFrom)
 		targetEmail := strings.TrimPrefix(condition, "from:")
 
 		return strings.Contains(strings.ToLower(fromEmail), targetEmail)
@@ -397,7 +427,7 @@ func matchesCondition(msg *gmail.Message, condition string) bool {
 		return strings.Contains(strings.ToLower(subject), targetSubject)
 	}
 
-	if condition == "has:attachment" {
+	if condition == gmailQueryHasAttach {
 		return hasAttachments(msg)
 	}
 
@@ -482,7 +512,7 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 		}
 
 		msgDate, _ := getDate(msg)
-		contentBuilder.WriteString(fmt.Sprintf("**From:** %s  \n", getHeader(msg, "from")))
+		contentBuilder.WriteString(fmt.Sprintf("**From:** %s  \n", getHeader(msg, metaKeyFrom)))
 		contentBuilder.WriteString(fmt.Sprintf("**Date:** %s  \n\n", msgDate.Format("2006-01-02 15:04:05")))
 		contentBuilder.WriteString(msgContent)
 	}
@@ -505,7 +535,7 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 		ID:         threadIDPrefix + thread.Id,
 		Title:      subject,
 		Content:    contentBuilder.String(),
-		SourceType: "gmail",
+		SourceType: sourceTypeGmail,
 		ItemType:   "email_thread",
 		CreatedAt:  createdAt,
 		UpdatedAt:  updatedAt,

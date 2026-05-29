@@ -143,7 +143,7 @@ func (tp *ThreadProcessor) consolidateThreads(threadGroups map[string]*ThreadGro
 			ID:         fmt.Sprintf("thread_%s", group.ThreadID),
 			Title:      title,
 			Content:    tp.buildConsolidatedContent(group),
-			SourceType: "gmail",
+			SourceType: sourceTypeGmail,
 			ItemType:   "email_thread",
 			CreatedAt:  group.StartTime,
 			UpdatedAt:  group.EndTime,
@@ -182,7 +182,7 @@ func (tp *ThreadProcessor) summarizeThreads(threadGroups map[string]*ThreadGroup
 			ID:         fmt.Sprintf("thread_summary_%s", group.ThreadID),
 			Title:      title,
 			Content:    tp.buildThreadSummary(group, maxMessages),
-			SourceType: "gmail",
+			SourceType: sourceTypeGmail,
 			ItemType:   "email_thread_summary",
 			CreatedAt:  group.StartTime,
 			UpdatedAt:  group.EndTime,
@@ -401,7 +401,7 @@ func (tp *ThreadProcessor) extractParticipants(item *models.Item) []string {
 	var participants []string
 
 	// Extract from metadata if available.
-	if from, exists := item.Metadata["from"]; exists {
+	if from, exists := item.Metadata[metaKeyFrom]; exists {
 		if sender := tp.extractEmailFromRecipient(from); sender != "" {
 			participants = append(participants, sender)
 		}
@@ -411,7 +411,7 @@ func (tp *ThreadProcessor) extractParticipants(item *models.Item) []string {
 }
 
 func (tp *ThreadProcessor) updateParticipants(group *ThreadGroup, item *models.Item) {
-	from, exists := item.Metadata["from"]
+	from, exists := item.Metadata[metaKeyFrom]
 	if !exists {
 		return
 	}
@@ -431,7 +431,7 @@ func (tp *ThreadProcessor) updateParticipants(group *ThreadGroup, item *models.I
 }
 
 func (tp *ThreadProcessor) extractSender(item *models.Item) string {
-	if from, exists := item.Metadata["from"]; exists {
+	if from, exists := item.Metadata[metaKeyFrom]; exists {
 		return tp.extractEmailFromRecipient(from)
 	}
 
@@ -499,7 +499,7 @@ func (tp *ThreadProcessor) buildThreadMetadata(group *ThreadGroup) map[string]in
 func (tp *ThreadProcessor) buildThreadTags(group *ThreadGroup) []string {
 	var tags []string
 
-	tags = append(tags, "gmail", "thread")
+	tags = append(tags, sourceTypeGmail, "thread")
 
 	if group.MessageCount > 5 {
 		tags = append(tags, "long-thread")
