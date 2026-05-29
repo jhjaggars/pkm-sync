@@ -26,6 +26,7 @@ type DiscoverableOption struct {
 	Selected    bool      // currently in config
 	Created     time.Time // optional: when the item was created (used for sorting)
 	Updated     time.Time // optional: when the item was last modified (used for sorting)
+	Owner       string    // optional: owner/author display name (used for sorting)
 }
 
 // DiscoverySection groups related options for display in the TUI.

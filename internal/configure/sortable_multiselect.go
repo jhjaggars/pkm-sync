@@ -16,10 +16,11 @@ const (
 	SortByName     SortColumn = iota
 	SortByCreated             // sort by DiscoverableOption.Created
 	SortByModified            // sort by DiscoverableOption.Updated
+	SortByOwner               // sort by DiscoverableOption.Owner
 )
 
 // SortableMultiSelect is a bubbletea Model that renders a scrollable, sortable,
-// multi-select list with k9s-style sort hotkeys and a legend footer.
+// multi-select list with sort hotkeys, a legend footer, and a live filter.
 type SortableMultiSelect struct {
 	title       string
 	description string
@@ -32,6 +33,8 @@ type SortableMultiSelect struct {
 	sortCol     SortColumn
 	ascending   bool
 	selected    map[string]bool // option.ID -> toggled
+	filter      string          // current filter string (empty = no filter)
+	filtering   bool            // true while the user is typing a filter
 	done        bool
 	aborted     bool
 }
@@ -80,9 +83,14 @@ func (m SortableMultiSelect) Aborted() bool {
 }
 
 func (m *SortableMultiSelect) buildSorted() {
-	indices := make([]int, len(m.options))
-	for i := range indices {
-		indices[i] = i
+	filterLow := strings.ToLower(m.filter)
+
+	indices := make([]int, 0, len(m.options))
+	for i, o := range m.options {
+		if filterLow == "" || strings.Contains(strings.ToLower(o.Name), filterLow) ||
+			strings.Contains(strings.ToLower(o.Owner), filterLow) {
+			indices = append(indices, i)
+		}
 	}
 
 	col := m.sortCol
@@ -118,6 +126,8 @@ func (m *SortableMultiSelect) buildSorted() {
 			default:
 				cmp = ta.Compare(tb)
 			}
+		case SortByOwner:
+			cmp = strings.Compare(strings.ToLower(oa.Owner), strings.ToLower(ob.Owner))
 		default: // SortByName
 			cmp = strings.Compare(strings.ToLower(oa.Name), strings.ToLower(ob.Name))
 		}
@@ -144,13 +154,59 @@ func (m SortableMultiSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(5, msg.Height-7)
 
 	case tea.KeyMsg:
+		// While filtering, route keys to the filter input.
+		if m.filtering {
+			switch msg.String() {
+			case "enter", "esc":
+				m.filtering = false
+			case "ctrl+c":
+				m.filter = ""
+				m.filtering = false
+				m.buildSorted()
+				m.cursor = 0
+				m.offset = 0
+			case "backspace":
+				if len(m.filter) > 0 {
+					m.filter = m.filter[:len(m.filter)-1]
+					m.buildSorted()
+					m.cursor = 0
+					m.offset = 0
+				}
+			default:
+				// Append printable runes to the filter.
+				if len(msg.Runes) > 0 {
+					m.filter += string(msg.Runes)
+					m.buildSorted()
+					m.cursor = 0
+					m.offset = 0
+				}
+			}
+
+			break
+		}
+
 		switch msg.String() {
-		case "ctrl+c", "esc", "q":
+		case "ctrl+c":
 			m.aborted = true
 			m.done = true
 
+		case "esc", "q":
+			// If a filter is active, esc clears it first rather than aborting.
+			if m.filter != "" {
+				m.filter = ""
+				m.buildSorted()
+				m.cursor = 0
+				m.offset = 0
+			} else {
+				m.aborted = true
+				m.done = true
+			}
+
 		case "enter":
 			m.done = true
+
+		case "/":
+			m.filtering = true
 
 		case "up", "k":
 			if m.cursor > 0 {
@@ -166,6 +222,18 @@ func (m SortableMultiSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor >= m.offset+m.height {
 					m.offset = m.cursor - m.height + 1
 				}
+			}
+
+		case "pgup", "ctrl+b":
+			m.cursor = max(0, m.cursor-m.height)
+			m.offset = max(0, m.offset-m.height)
+
+		case "pgdown", "ctrl+f":
+			last := len(m.sorted) - 1
+			m.cursor = min(last, m.cursor+m.height)
+
+			if m.cursor >= m.offset+m.height {
+				m.offset = m.cursor - m.height + 1
 			}
 
 		case " ", "x":
@@ -219,6 +287,18 @@ func (m SortableMultiSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.buildSorted()
 			m.cursor = 0
 			m.offset = 0
+
+		case "O": // Shift-O: sort by owner
+			if m.sortCol == SortByOwner {
+				m.ascending = !m.ascending
+			} else {
+				m.sortCol = SortByOwner
+				m.ascending = true
+			}
+
+			m.buildSorted()
+			m.cursor = 0
+			m.offset = 0
 		}
 	}
 
@@ -231,12 +311,26 @@ func (m SortableMultiSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // column widths for the table layout.
 const (
-	colDateWidth = 12 // "2006-01-02" + 2 padding
-	minWidthFull = 60 // below this width, date columns are hidden
+	colDateWidth  = 12 // "2006-01-02" + 2 padding
+	colOwnerWidth = 22 // owner display name, truncated
+	minWidthFull  = 60 // below this width, date columns are hidden
+	minWidthOwner = 90 // below this width, owner column is hidden
 )
+
+// hasOwners reports whether any option has a non-empty Owner field.
+func (m SortableMultiSelect) hasOwners() bool {
+	for _, o := range m.options {
+		if o.Owner != "" {
+			return true
+		}
+	}
+
+	return false
+}
 
 func (m SortableMultiSelect) View() string {
 	showDates := m.width >= minWidthFull
+	showOwner := m.width >= minWidthOwner && m.hasOwners()
 
 	var sb strings.Builder
 
@@ -247,8 +341,20 @@ func (m SortableMultiSelect) View() string {
 	sb.WriteByte('\n')
 	sb.WriteByte('\n')
 
+	// Filter bar — shown when actively filtering or when a filter is set.
+	if m.filtering || m.filter != "" {
+		cursor := ""
+		if m.filtering {
+			cursor = "█"
+		}
+
+		sb.WriteString(filterStyle.Render(fmt.Sprintf("  Filter: %s%s", m.filter, cursor)))
+		sb.WriteByte('\n')
+		sb.WriteByte('\n')
+	}
+
 	// Header row.
-	sb.WriteString(m.renderHeader(showDates))
+	sb.WriteString(m.renderHeader(showDates, showOwner))
 	sb.WriteByte('\n')
 	sb.WriteByte('\n')
 
@@ -260,14 +366,22 @@ func (m SortableMultiSelect) View() string {
 		opt := m.options[idx]
 		isCursor := row == m.cursor
 		isSelected := m.selected[opt.ID]
-		sb.WriteString(m.renderRow(opt, isCursor, isSelected, showDates))
+		sb.WriteString(m.renderRow(opt, isCursor, isSelected, showDates, showOwner))
 		sb.WriteByte('\n')
 	}
 
 	// Scroll indicator.
 	if len(m.sorted) > m.height {
 		shown := min(m.offset+m.height, len(m.sorted))
-		sb.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", m.offset+1, shown, len(m.sorted))))
+		total := len(m.options)
+
+		if m.filter != "" {
+			indicator := fmt.Sprintf("  %d–%d of %d (filtered from %d)", m.offset+1, shown, len(m.sorted), total)
+			sb.WriteString(dimStyle.Render(indicator))
+		} else {
+			sb.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", m.offset+1, shown, total)))
+		}
+
 		sb.WriteByte('\n')
 	}
 
@@ -277,26 +391,33 @@ func (m SortableMultiSelect) View() string {
 	return sb.String()
 }
 
-func (m SortableMultiSelect) renderHeader(showDates bool) string {
+func (m SortableMultiSelect) renderHeader(showDates, showOwner bool) string {
 	arrow := m.sortArrow()
 
 	nameHeader := "Name"
+	ownerHeader := "Owner"
 	createdHeader := "Created"
 	modifiedHeader := "Modified"
 
 	switch m.sortCol {
 	case SortByName:
 		nameHeader = arrow + nameHeader
+	case SortByOwner:
+		ownerHeader = arrow + ownerHeader
 	case SortByCreated:
 		createdHeader = arrow + createdHeader
 	case SortByModified:
 		modifiedHeader = arrow + modifiedHeader
 	}
 
-	nameWidth := m.nameColWidth(showDates)
+	nameWidth := m.nameColWidth(showDates, showOwner)
 	// Pad plain text BEFORE applying lipgloss — rendering adds ANSI codes that
 	// padRight would count as runes, breaking column alignment.
 	header := "      " + headerStyle.Render(padRight(nameHeader, nameWidth))
+
+	if showOwner {
+		header += "  " + headerStyle.Render(padRight(ownerHeader, colOwnerWidth))
+	}
 
 	if showDates {
 		header += "  " + headerStyle.Render(padRight(createdHeader, colDateWidth))
@@ -306,13 +427,13 @@ func (m SortableMultiSelect) renderHeader(showDates bool) string {
 	return header
 }
 
-func (m SortableMultiSelect) renderRow(opt DiscoverableOption, isCursor, isSelected, showDates bool) string {
+func (m SortableMultiSelect) renderRow(opt DiscoverableOption, isCursor, isSelected, showDates, showOwner bool) string {
 	checkbox := "[ ]"
 	if isSelected {
 		checkbox = selectedStyle.Render("[x]")
 	}
 
-	nameWidth := m.nameColWidth(showDates)
+	nameWidth := m.nameColWidth(showDates, showOwner)
 	name := padRight(opt.Name, nameWidth)
 
 	if isCursor {
@@ -320,6 +441,10 @@ func (m SortableMultiSelect) renderRow(opt DiscoverableOption, isCursor, isSelec
 	}
 
 	line := fmt.Sprintf("  %s %s", checkbox, name)
+
+	if showOwner {
+		line += "  " + dimStyle.Render(padRight(opt.Owner, colOwnerWidth))
+	}
 
 	if showDates {
 		created := dimStyle.Render(padRight(FormatCompactDate(opt.Created), colDateWidth))
@@ -331,11 +456,15 @@ func (m SortableMultiSelect) renderRow(opt DiscoverableOption, isCursor, isSelec
 }
 
 func (m SortableMultiSelect) renderLegend() string {
-	// Sort hotkeys.
+	// Sort hotkeys — show <O>wner only when owner data is present.
 	hotkeys := []string{
 		hotkey("N", "ame"),
 		hotkey("C", "reated"),
 		hotkey("M", "odified"),
+	}
+
+	if m.hasOwners() {
+		hotkeys = append(hotkeys, hotkey("O", "wner"))
 	}
 
 	// Current sort state indicator.
@@ -343,12 +472,13 @@ func (m SortableMultiSelect) renderLegend() string {
 		SortByName:     "Name",
 		SortByCreated:  "Created",
 		SortByModified: "Modified",
+		SortByOwner:    "Owner",
 	}[m.sortCol]
 
 	sortIndicator := dimStyle.Render(m.sortArrow() + colName)
 
 	// Action hints.
-	actions := dimStyle.Render("space:toggle  a:all  n:none  enter:confirm  esc:cancel")
+	actions := dimStyle.Render("space:toggle  a:all  n:none  /:filter  pgup/pgdn:page  enter:confirm  esc:cancel")
 
 	sep := "  " + dimSepStyle.Render("│") + "  "
 
@@ -363,12 +493,16 @@ func (m SortableMultiSelect) sortArrow() string {
 	return "↓"
 }
 
-func (m SortableMultiSelect) nameColWidth(showDates bool) int {
+func (m SortableMultiSelect) nameColWidth(showDates, showOwner bool) int {
 	if !showDates {
 		return m.width - 6 // checkbox(3) + spaces(2) + margin(1)
 	}
 	// width - checkbox(3) - spaces(2) - 2*date cols - separators
 	w := m.width - 3 - 2 - 2*(colDateWidth+2)
+	if showOwner {
+		w -= colOwnerWidth + 2
+	}
+
 	if w < 20 {
 		w = 20
 	}
@@ -401,4 +535,5 @@ var (
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	dimSepStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	hotkeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	filterStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 )
