@@ -8,20 +8,24 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 
 	"pkm-sync/internal/config"
 	"pkm-sync/pkg/models"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
 )
 
 // DiscoverableOption represents a single selectable item (channel, label, folder, project).
 type DiscoverableOption struct {
-	ID          string // channel ID, folder ID, label ID/name, project key
-	Name        string // human-readable display name
-	Description string // extra context shown in TUI (e.g., recent item previews)
-	Selected    bool   // currently in config
+	ID          string    // channel ID, folder ID, label ID/name, project key
+	Name        string    // human-readable display name
+	Description string    // extra context shown in TUI (e.g., recent item previews)
+	Selected    bool      // currently in config
+	Created     time.Time // optional: when the item was created (used for sorting)
+	Updated     time.Time // optional: when the item was last modified (used for sorting)
 }
 
 // DiscoverySection groups related options for display in the TUI.
@@ -191,15 +195,45 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 		return nil
 	}
 
-	// Phase 5: Build and run huh multi-select forms for each section.
-	// selectedPtrs holds a pointer per section so huh can write results directly.
+	// Phase 5: Build and run forms for each section.
+	// Slack "Channels" uses the sortable bubbletea picker; all other sections use huh.
 	selectedPtrs := make([]*[]string, len(sections))
-	formGroups := make([]*huh.Group, 0, len(sections))
 
+	// Pass 1: run any sortable sections immediately (they need full-screen control).
 	for i := range sections {
 		section := &sections[i]
 
-		// Build huh options from DiscoverableOption slice.
+		if section.Name == "Channels" && sourceType == sourceTypeSlack {
+			model := NewSortableMultiSelect(section.Name, section.Description, section.Options)
+			p := tea.NewProgram(model, tea.WithAltScreen())
+
+			finalModel, err := p.Run()
+			if err != nil {
+				return fmt.Errorf("channel picker error: %w", err)
+			}
+
+			result := finalModel.(SortableMultiSelect)
+			if result.Aborted() {
+				fmt.Println("Canceled.")
+
+				return nil
+			}
+
+			ids := result.SelectedIDs()
+			selectedPtrs[i] = &ids
+		}
+	}
+
+	// Pass 2: build huh groups for all remaining (non-sortable) sections.
+	formGroups := make([]*huh.Group, 0, len(sections))
+
+	for i := range sections {
+		if selectedPtrs[i] != nil {
+			continue // already handled by sortable picker
+		}
+
+		section := &sections[i]
+
 		opts := make([]huh.Option[string], 0, len(section.Options))
 		for _, opt := range section.Options {
 			label := opt.Name
@@ -215,7 +249,6 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 			opts = append(opts, o)
 		}
 
-		// Allocate an addressable slice for huh to write into.
 		selected := make([]string, 0)
 		selectedPtrs[i] = &selected
 
@@ -228,15 +261,17 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 		formGroups = append(formGroups, huh.NewGroup(multi))
 	}
 
-	form := huh.NewForm(formGroups...)
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Println("Canceled.")
+	if len(formGroups) > 0 {
+		form := huh.NewForm(formGroups...)
+		if err := form.Run(); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Println("Canceled.")
 
-			return nil
+				return nil
+			}
+
+			return fmt.Errorf("form error: %w", err)
 		}
-
-		return fmt.Errorf("form error: %w", err)
 	}
 
 	// Phase 6: Apply selections and show diff.

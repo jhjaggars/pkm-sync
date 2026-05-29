@@ -3,6 +3,7 @@ package configure
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"pkm-sync/internal/config"
@@ -104,8 +105,14 @@ func (p *SlackProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 			Name:        "#" + ch.Name,
 			Description: desc,
 			Selected:    configuredChannels[ch.Name],
+			Created:     ch.Created,
+			Updated:     ch.Updated,
 		})
 	}
+
+	slices.SortFunc(channelOpts, func(a, b DiscoverableOption) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
 
 	// "Channel Groups" section: starred + custom sidebar sections.
 	groupOpts := p.buildChannelGroupOptions(configuredGroups)
