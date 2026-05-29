@@ -203,7 +203,8 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 	for i := range sections {
 		section := &sections[i]
 
-		if section.Name == "Channels" && sourceType == sourceTypeSlack {
+		if (section.Name == "Channels" && sourceType == sourceTypeSlack) ||
+			(section.Name == "Folders" && sourceType == sourceTypeDrive) {
 			model := NewSortableMultiSelect(section.Name, section.Description, section.Options)
 			p := tea.NewProgram(model, tea.WithAltScreen())
 
