@@ -65,6 +65,8 @@ func (p *DriveProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 			ID:       f.ID,
 			Name:     f.Name,
 			Selected: configuredFolders[f.ID],
+			Created:  f.CreatedTime,
+			Updated:  f.ModifiedTime,
 		})
 	}
 
