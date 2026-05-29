@@ -18,6 +18,8 @@ type SlackChannel struct {
 	IsGroup bool   `json:"is_group"`
 	IsMPIM  bool   `json:"is_mpim"`
 	User    string `json:"user"` // For IMs: the other user's ID
+	Created time.Time
+	Updated time.Time
 }
 
 // RawMessage is a raw Slack API message object.
@@ -403,6 +405,15 @@ func mapToChannel(m map[string]any, isIM bool) SlackChannel {
 
 	if v, ok := m["is_mpim"].(bool); ok {
 		ch.IsMPIM = v
+	}
+
+	if v, ok := m["created"].(float64); ok && v > 0 {
+		ch.Created = time.Unix(int64(v), 0)
+	}
+
+	if v, ok := m["updated"].(float64); ok && v > 0 {
+		// Slack's boot API returns `updated` in milliseconds, unlike `created` which is seconds.
+		ch.Updated = time.Unix(int64(v)/1000, 0)
 	}
 
 	return ch
