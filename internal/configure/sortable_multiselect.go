@@ -160,11 +160,8 @@ func (m SortableMultiSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter", "esc":
 				m.filtering = false
 			case "ctrl+c":
-				m.filter = ""
-				m.filtering = false
-				m.buildSorted()
-				m.cursor = 0
-				m.offset = 0
+				m.aborted = true
+				m.done = true
 			case "backspace":
 				if len(m.filter) > 0 {
 					m.filter = m.filter[:len(m.filter)-1]

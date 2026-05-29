@@ -413,7 +413,7 @@ func mapToChannel(m map[string]any, isIM bool) SlackChannel {
 
 	if v, ok := m["updated"].(float64); ok && v > 0 {
 		// Slack's boot API returns `updated` in milliseconds, unlike `created` which is seconds.
-		ch.Updated = time.Unix(int64(v)/1000, 0)
+		ch.Updated = time.UnixMilli(int64(v))
 	}
 
 	return ch
