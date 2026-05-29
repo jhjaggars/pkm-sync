@@ -20,6 +20,15 @@ func makeTestOpts() []DiscoverableOption {
 	}
 }
 
+func makeTestOptsWithOwners() []DiscoverableOption {
+	return []DiscoverableOption{
+		{ID: "f1", Name: "Reports", Owner: "Carol"},
+		{ID: "f2", Name: "Projects", Owner: "Alice"},
+		{ID: "f3", Name: "Archives", Owner: "Bob"},
+		{ID: "f4", Name: "Shared", Owner: ""},
+	}
+}
+
 // sendKey simulates a key press on a SortableMultiSelect and returns the new model.
 func sendKey(m SortableMultiSelect, k string) SortableMultiSelect {
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
@@ -181,6 +190,95 @@ func TestAbortEsc(t *testing.T) {
 
 	if !m.Aborted() {
 		t.Error("expected Aborted() after esc")
+	}
+}
+
+func TestSortByOwnerAscending(t *testing.T) {
+	m := NewSortableMultiSelect("Folders", "", makeTestOptsWithOwners())
+	m = sendKey(m, "O")
+	names := sortedNames(m)
+	// ascending: Alice, Bob, Carol, then empty-owner last? Actually empty string sorts first alphabetically.
+	// "" < "Alice" < "Bob" < "Carol"
+	want := []string{"Shared", "Projects", "Archives", "Reports"}
+	for i, n := range want {
+		if names[i] != n {
+			t.Errorf("pos %d: want %q got %q", i, n, names[i])
+		}
+	}
+}
+
+func TestFilterByName(t *testing.T) {
+	m := NewSortableMultiSelect("Channels", "", makeTestOpts())
+	// Type "/" then "ma" to filter for "mango"
+	m = sendKey(m, "/")
+	if !m.filtering {
+		t.Fatal("expected filtering mode after /")
+	}
+
+	m = sendKey(m, "m")
+	m = sendKey(m, "a")
+
+	names := sortedNames(m)
+	if len(names) != 1 || names[0] != "#mango" {
+		t.Errorf("expected [#mango] after filter 'ma', got %v", names)
+	}
+}
+
+func TestFilterClearedByEsc(t *testing.T) {
+	m := NewSortableMultiSelect("Channels", "", makeTestOpts())
+	m = sendKey(m, "/")
+	m = sendKey(m, "z")
+	// exit filter mode
+	m = sendSpecialKey(m, tea.KeyEsc)
+	if m.filtering {
+		t.Error("should no longer be filtering after esc")
+	}
+
+	// esc again clears the filter (not abort, since filter is set)
+	m = sendSpecialKey(m, tea.KeyEsc)
+	if m.filter != "" {
+		t.Errorf("expected filter cleared, got %q", m.filter)
+	}
+
+	if m.Aborted() {
+		t.Error("should not abort when filter was set")
+	}
+}
+
+func TestFilterBackspace(t *testing.T) {
+	m := NewSortableMultiSelect("Channels", "", makeTestOpts())
+	m = sendKey(m, "/")
+	m = sendKey(m, "z")
+	m = sendKey(m, "e")
+
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	next, _ := m.Update(msg)
+	m = next.(SortableMultiSelect)
+
+	if m.filter != "z" {
+		t.Errorf("expected filter 'z' after backspace, got %q", m.filter)
+	}
+}
+
+func TestPageDown(t *testing.T) {
+	m := NewSortableMultiSelect("Channels", "", makeTestOpts())
+	m.height = 2 // only 2 visible rows
+	m = sendSpecialKey(m, tea.KeyPgDown)
+
+	if m.cursor != 2 {
+		t.Errorf("expected cursor 2 after pgdown with height=2, got %d", m.cursor)
+	}
+}
+
+func TestHasOwners(t *testing.T) {
+	m1 := NewSortableMultiSelect("Folders", "", makeTestOptsWithOwners())
+	if !m1.hasOwners() {
+		t.Error("expected hasOwners() true")
+	}
+
+	m2 := NewSortableMultiSelect("Channels", "", makeTestOpts())
+	if m2.hasOwners() {
+		t.Error("expected hasOwners() false for opts without owners")
 	}
 }
 

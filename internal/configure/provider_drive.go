@@ -61,12 +61,18 @@ func (p *DriveProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 
 	folderOpts := make([]DiscoverableOption, 0, len(folders))
 	for _, f := range folders {
+		owner := ""
+		if len(f.Owners) > 0 {
+			owner = f.Owners[0]
+		}
+
 		folderOpts = append(folderOpts, DiscoverableOption{
 			ID:       f.ID,
 			Name:     f.Name,
 			Selected: configuredFolders[f.ID],
 			Created:  f.CreatedTime,
 			Updated:  f.ModifiedTime,
+			Owner:    owner,
 		})
 	}
 
