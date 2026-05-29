@@ -211,7 +211,7 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 
 			finalModel, err := p.Run()
 			if err != nil {
-				return fmt.Errorf("channel picker error: %w", err)
+				return fmt.Errorf("%s picker error: %w", section.Name, err)
 			}
 
 			result := finalModel.(SortableMultiSelect)
