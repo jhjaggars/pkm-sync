@@ -3,6 +3,7 @@ package configure
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // FormatDiff returns a human-readable summary of added/removed items between two slices.
@@ -62,6 +63,15 @@ func TruncateString(s string, maxLen int) string {
 	}
 
 	return string(runes[:maxLen-3]) + "..."
+}
+
+// FormatCompactDate formats a time.Time as YYYY-MM-DD, or "—" if zero.
+func FormatCompactDate(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+
+	return t.Format("2006-01-02")
 }
 
 // FormatPreviewDescription formats a slice of preview items into a short

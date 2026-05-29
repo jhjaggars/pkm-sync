@@ -2,6 +2,7 @@ package configure
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"pkm-sync/internal/sources/google/auth"
@@ -80,6 +81,10 @@ func (p *GmailProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 			Selected:    configured[label.Id] || configured[label.Name],
 		})
 	}
+
+	slices.SortFunc(opts, func(a, b DiscoverableOption) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
 
 	return []DiscoverySection{
 		{
