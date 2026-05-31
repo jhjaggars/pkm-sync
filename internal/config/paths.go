@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 var (
@@ -93,7 +94,7 @@ func FindCredentialsFile() (string, error) {
 // ExpandPath expands a leading ~ to the user's home directory.
 // Paths without a leading ~ are returned unchanged.
 func ExpandPath(path string) (string, error) {
-	if path == "" || path[0] != '~' {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}
 

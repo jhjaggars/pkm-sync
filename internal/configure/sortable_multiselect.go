@@ -509,6 +509,10 @@ func (m SortableMultiSelect) nameColWidth(showDates, showOwner bool) int {
 
 // padRight pads or truncates s to exactly n runes.
 func padRight(s string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+
 	runes := []rune(s)
 	if len(runes) >= n {
 		return string(runes[:n])
