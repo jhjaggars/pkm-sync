@@ -90,6 +90,21 @@ func FindCredentialsFile() (string, error) {
 	return "", fmt.Errorf("credentials.json not found in any search paths: %v", paths)
 }
 
+// ExpandPath expands a leading ~ to the user's home directory.
+// Paths without a leading ~ are returned unchanged.
+func ExpandPath(path string) (string, error) {
+	if path == "" || path[0] != '~' {
+		return path, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("unable to expand path %q: %w", path, err)
+	}
+
+	return filepath.Join(homeDir, path[1:]), nil
+}
+
 func getCredentialSearchPaths() []string {
 	var paths []string
 

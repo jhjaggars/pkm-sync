@@ -219,9 +219,37 @@ func loadConfigFromFile(configPath string) (*models.Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
+	if err := expandConfigPaths(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to expand paths in config file %s: %w", configPath, err)
+	}
+
 	applyEnvOverrides(&cfg)
 
 	return &cfg, nil
+}
+
+// expandConfigPaths expands ~ in all user-settable path fields.
+func expandConfigPaths(cfg *models.Config) error {
+	expanded, err := ExpandPath(cfg.Sync.DefaultOutputDir)
+	if err != nil {
+		return err
+	}
+
+	cfg.Sync.DefaultOutputDir = expanded
+
+	for _, field := range []*string{
+		&cfg.Auth.CredentialsPath,
+		&cfg.Auth.TokenPath,
+		&cfg.App.LogFile,
+		&cfg.App.BackupDir,
+		&cfg.App.CacheDir,
+	} {
+		if *field, err = ExpandPath(*field); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // applyEnvOverrides overlays environment variable values onto the config.
