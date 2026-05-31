@@ -127,7 +127,7 @@ func (r *DriveResolver) Resolve(_ context.Context, rawURL string) (models.FullIt
 			"owners":        meta.Owners,
 		},
 		Links: []models.Link{
-			{URL: rawURL, Title: meta.Name, Type: itemTypeDocument},
+			{URL: rawURL, Title: meta.Name, Type: itemType},
 		},
 	}
 

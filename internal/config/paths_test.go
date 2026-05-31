@@ -24,6 +24,7 @@ func TestExpandPath(t *testing.T) {
 		{"tilde only", "~", homeDir},
 		{"tilde with subdir", "~/some/dir", filepath.Join(homeDir, "some/dir")},
 		{"tilde with spaces", "~/path with spaces/foo", filepath.Join(homeDir, "path with spaces/foo")},
+		{"tilde other user", "~otheruser/file", "~otheruser/file"},
 	}
 
 	for _, tt := range tests {
