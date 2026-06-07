@@ -209,7 +209,17 @@ func loadConfigFromFile(configPath string) (*models.Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
+	applyEnvOverrides(&cfg)
+
 	return &cfg, nil
+}
+
+// applyEnvOverrides overlays environment variable values onto the config.
+// This allows secrets (e.g. API keys) to be injected without putting them in the config file.
+func applyEnvOverrides(cfg *models.Config) {
+	if v := os.Getenv("PKM_SYNC_EMBEDDINGS_API_KEY"); v != "" {
+		cfg.Embeddings.APIKey = v
+	}
 }
 
 // ValidateConfig performs comprehensive validation of the configuration.

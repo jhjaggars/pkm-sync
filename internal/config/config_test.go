@@ -62,6 +62,41 @@ func TestLoadConfig_NoFileError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no config file found", "Error message should indicate that no file was found")
 }
 
+// TestApplyEnvOverrides_EmbeddingsAPIKey tests that PKM_SYNC_EMBEDDINGS_API_KEY overrides the config value.
+func TestApplyEnvOverrides_EmbeddingsAPIKey(t *testing.T) {
+	tempDir := t.TempDir()
+	originalCustomConfigDir := customConfigDir
+	customConfigDir = tempDir
+	defer func() { customConfigDir = originalCustomConfigDir }()
+
+	cfg := GetDefaultConfig()
+	require.Empty(t, cfg.Embeddings.APIKey)
+	err := SaveConfig(cfg)
+	require.NoError(t, err)
+
+	t.Setenv("PKM_SYNC_EMBEDDINGS_API_KEY", "test-litellm-key")
+
+	loaded, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "test-litellm-key", loaded.Embeddings.APIKey)
+}
+
+// TestApplyEnvOverrides_NoOverrideWhenEnvUnset tests that the config value is preserved when env var is absent.
+func TestApplyEnvOverrides_NoOverrideWhenEnvUnset(t *testing.T) {
+	tempDir := t.TempDir()
+	originalCustomConfigDir := customConfigDir
+	customConfigDir = tempDir
+	defer func() { customConfigDir = originalCustomConfigDir }()
+
+	cfg := GetDefaultConfig()
+	err := SaveConfig(cfg)
+	require.NoError(t, err)
+
+	loaded, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Empty(t, loaded.Embeddings.APIKey)
+}
+
 // TestGetDefaultConfig provides a basic sanity check for the default configuration.
 func TestGetDefaultConfig(t *testing.T) {
 	defaultConfig := GetDefaultConfig()
