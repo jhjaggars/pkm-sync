@@ -494,3 +494,52 @@ func TestStore_Search_WrongDimensions(t *testing.T) {
 		t.Fatal("expected error for wrong query dimensions")
 	}
 }
+
+func TestStore_NewestDocumentTimeBySource(t *testing.T) {
+	store, err := NewStore(":memory:", 3)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Empty store returns zero time, no error.
+	ts, err := store.NewestDocumentTimeBySource("gmail_work")
+	if err != nil {
+		t.Fatalf("unexpected error on empty store: %v", err)
+	}
+	if !ts.IsZero() {
+		t.Errorf("expected zero time for empty store, got %v", ts)
+	}
+
+	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	docs := []Document{
+		{SourceID: "a", ThreadID: "t1", SourceType: "gmail", SourceName: "gmail_work", Metadata: map[string]interface{}{}, CreatedAt: older, UpdatedAt: older},
+		{SourceID: "b", ThreadID: "t2", SourceType: "gmail", SourceName: "gmail_work", Metadata: map[string]interface{}{}, CreatedAt: newer, UpdatedAt: newer},
+		{SourceID: "c", ThreadID: "t3", SourceType: "slack", SourceName: "slack_redhat", Metadata: map[string]interface{}{}, CreatedAt: newer, UpdatedAt: newer},
+	}
+	emb := []float32{0.1, 0.2, 0.3}
+	for _, d := range docs {
+		if err := store.UpsertDocument(d, emb); err != nil {
+			t.Fatalf("upsert failed: %v", err)
+		}
+	}
+
+	ts, err = store.NewestDocumentTimeBySource("gmail_work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ts.Equal(newer) {
+		t.Errorf("expected %v, got %v", newer, ts)
+	}
+
+	// Different source is unaffected.
+	ts, err = store.NewestDocumentTimeBySource("slack_redhat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ts.Equal(newer) {
+		t.Errorf("expected %v for slack_redhat, got %v", newer, ts)
+	}
+}

@@ -344,6 +344,26 @@ func (s *Store) GetIndexedThreadIDs(sourceName string) (map[string]bool, error) 
 	return indexed, rows.Err()
 }
 
+// NewestDocumentTimeBySource returns the most recent updated_at timestamp for
+// documents from the given source, or a zero Time if none exist yet.
+func (s *Store) NewestDocumentTimeBySource(sourceName string) (time.Time, error) {
+	var ts sql.NullString
+
+	err := s.db.QueryRow(
+		"SELECT MAX(updated_at) FROM documents WHERE source_name = ?", sourceName,
+	).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return time.Time{}, nil
+	}
+
+	t, err := time.Parse(time.RFC3339, ts.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse timestamp %q: %w", ts.String, err)
+	}
+
+	return t, nil
+}
+
 // Stats returns statistics about the vector store.
 func (s *Store) Stats() (*StoreStats, error) {
 	stats := &StoreStats{

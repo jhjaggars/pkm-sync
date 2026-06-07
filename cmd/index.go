@@ -8,6 +8,7 @@ import (
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google/auth"
 	syncer "pkm-sync/internal/sync"
+	"pkm-sync/internal/vectorstore"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 
@@ -141,6 +142,20 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 
 	if len(entries) == 0 {
 		return fmt.Errorf("no valid sources to index")
+	}
+
+	// Tighten per-source since to the newest already-indexed document so we only
+	// fetch items newer than what's already in vectors.db. Skipped when --reindex
+	// is set (which forces a full re-embed of everything).
+	if !indexReindex {
+		if store, err := vectorstore.NewStore(dbPath, cfg.Embeddings.Dimensions); err == nil {
+			for i, entry := range entries {
+				if newest, err := store.NewestDocumentTimeBySource(entry.Name); err == nil && !newest.IsZero() && newest.After(entry.Since) {
+					entries[i].Since = newest
+				}
+			}
+			store.Close()
+		}
 	}
 
 	// Run sync pipeline: fetch → (no transform) → vector sink
