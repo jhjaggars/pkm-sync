@@ -47,15 +47,24 @@ func (s *DBSource) SupportsRealtime() bool { return false }
 
 // Fetch returns Slack messages from the local archive newer than since, up to limit items.
 func (s *DBSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) {
-	const query = `
+	// limit <= 0 means unlimited — appropriate for local DB sources.
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	const baseQuery = `
 		SELECT id, channel_id, channel_name, workspace, author, content,
 		       message_url, item_type, thread_ts, is_thread_root, reply_count, created_at
 		FROM slack_messages
 		WHERE created_at >= ?
-		ORDER BY created_at ASC
-		LIMIT ?`
+		ORDER BY created_at ASC`
 
-	rows, err := s.db.Query(query, since.UTC().Format(time.RFC3339), limit)
+	if limit > 0 {
+		rows, err = s.db.Query(baseQuery+" LIMIT ?", since.UTC().Format(time.RFC3339), limit)
+	} else {
+		rows, err = s.db.Query(baseQuery, since.UTC().Format(time.RFC3339))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query slack archive: %w", err)
 	}
