@@ -118,10 +118,10 @@ func (s *Service) filterEvents(events []*calendar.Event) []*calendar.Event {
 	return filteredEvents
 }
 
-func (s *Service) GetUpcomingEvents(maxResults int64) ([]*calendar.Event, error) {
+func (s *Service) GetUpcomingEvents(calendarID string, maxResults int64) ([]*calendar.Event, error) {
 	t := time.Now().Format(time.RFC3339)
 
-	events, err := s.calendarService.Events.List("primary").
+	events, err := s.calendarService.Events.List(calendarID).
 		ShowDeleted(false).
 		SingleEvents(true).
 		TimeMin(t).
@@ -135,11 +135,13 @@ func (s *Service) GetUpcomingEvents(maxResults int64) ([]*calendar.Event, error)
 	return s.filterEvents(events.Items), nil
 }
 
-func (s *Service) GetEventsInRange(start, end time.Time, maxResults int64) ([]*calendar.Event, error) {
+func (s *Service) GetEventsInRange(
+	calendarID string, start, end time.Time, maxResults int64,
+) ([]*calendar.Event, error) {
 	startTime := start.Format(time.RFC3339)
 	endTime := end.Format(time.RFC3339)
 
-	events, err := s.calendarService.Events.List("primary").
+	events, err := s.calendarService.Events.List(calendarID).
 		ShowDeleted(false).
 		SingleEvents(true).
 		TimeMin(startTime).

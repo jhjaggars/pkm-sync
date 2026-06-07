@@ -87,7 +87,7 @@ func runSetupCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("calendar service creation failed: %w", err)
 	}
 
-	events, err := calendarService.GetUpcomingEvents(1)
+	events, err := calendarService.GetUpcomingEvents("primary", 1)
 	if err != nil {
 		fmt.Printf("   [FAIL] Failed to access calendar: %v\n", err)
 		fmt.Println()

@@ -13,6 +13,12 @@ GOLANGCI_LINT := golangci-lint
 # Install prefix (XDG-style user-local)
 PREFIX := $(HOME)/.local
 
+# Container image
+REGISTRY := registry.jaggars.cc
+IMAGE_NAME := pkm-sync-daily
+IMAGE_TAG := latest
+IMAGE := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+
 # Default target: Run all CI checks.
 .PHONY: all
 all: ci
@@ -113,6 +119,18 @@ check-golangci-version:
 	fi; \
 	echo "✅ golangci-lint version check passed ($$version)"
 
+# Target: docker-build - Build the container image.
+.PHONY: docker-build
+docker-build:
+	@echo "🐳 Building container image $(IMAGE)..."
+	@docker build -t $(IMAGE) .
+
+# Target: docker-push - Push the container image to the registry.
+.PHONY: docker-push
+docker-push:
+	@echo "🐳 Pushing $(IMAGE)..."
+	@docker push $(IMAGE)
+
 # Target: help - Displays help for the Makefile targets.
 .PHONY: help
 help:
@@ -129,6 +147,8 @@ help:
 	@echo "  uninstall              - Remove installed binary from \$(PREFIX)/bin."
 	@echo "  clean                  - Remove the built binary."
 	@echo "  tidy                   - Tidy go modules."
+	@echo "  docker-build           - Build the container image."
+	@echo "  docker-push            - Push the image to the registry."
 	@echo "  check-golangci-version - Verify golangci-lint v2.0+ is installed."
 	@echo "  help                   - Show this help message."
 

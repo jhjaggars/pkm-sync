@@ -241,7 +241,12 @@ func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.FullI
 		return nil, fmt.Errorf("calendar service not initialized")
 	}
 
-	events, err := g.calendarService.GetEventsInRange(since, time.Now().AddDate(0, 1, 0), int64(limit))
+	calendarID := g.config.Google.CalendarID
+	if calendarID == "" {
+		calendarID = "primary"
+	}
+
+	events, err := g.calendarService.GetEventsInRange(calendarID, since, time.Now().AddDate(0, 1, 0), int64(limit))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch calendar events: %w", err)
 	}

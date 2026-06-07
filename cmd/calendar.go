@@ -39,6 +39,8 @@ Examples:
 
 // Calendar command flags.
 var (
+	calendarID     string
+	noFilter       bool
 	maxResults     int64
 	outputFormat   string
 	includeDetails bool
@@ -125,6 +127,11 @@ func runCalendarCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create calendar service: %w", err)
 	}
 
+	if noFilter {
+		calendarService.SetRequireMultipleAttendees(false)
+		calendarService.SetIncludeSelfOnlyEvents(true)
+	}
+
 	// Create drive service if export is requested or details are included.
 	var driveService *drive.Service
 	if exportDocs || includeDetails {
@@ -141,7 +148,7 @@ func runCalendarCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch events in the specified range.
-	events, err := calendarService.GetEventsInRange(start, end, maxResults)
+	events, err := calendarService.GetEventsInRange(calendarID, start, end, maxResults)
 	if err != nil {
 		return fmt.Errorf("failed to get events: %w", err)
 	}
@@ -353,6 +360,8 @@ func init() {
 
 	// Date range flags are inherited from rootCmd as persistent flags
 
+	calendarCmd.Flags().StringVar(&calendarID, "calendar-id", "primary", "Google Calendar ID to query")
+	calendarCmd.Flags().BoolVar(&noFilter, "no-filter", false, "Disable attendee filtering (useful for shared calendars)")
 	calendarCmd.Flags().Int64VarP(&maxResults, "max-results", "n", 50, "Maximum number of events to return")
 
 	// Output and formatting flags.
