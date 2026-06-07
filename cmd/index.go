@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"path/filepath"
+
 	"pkm-sync/internal/config"
 	"pkm-sync/internal/sinks"
 	"pkm-sync/internal/sources/google/auth"
+	slacksource "pkm-sync/internal/sources/slack"
 	syncer "pkm-sync/internal/sync"
 	"pkm-sync/internal/vectorstore"
 	"pkm-sync/pkg/interfaces"
@@ -117,19 +120,45 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Force ExtractRecipients for Gmail sources to get richer embedding metadata
-		if sourceConfig.Type == "gmail" {
-			sourceConfig.Gmail.ExtractRecipients = true
-		}
+		var src interfaces.Source
 
-		client, err := auth.GetClient()
-		if err != nil {
-			return fmt.Errorf("failed to create authenticated client: %w", err)
-		}
+		switch sourceConfig.Type {
+		case "slack":
+			// Always read from local slack.db — never hit the API during indexing.
+			slackDBPath := cfg.Slack.DBPath
+			if slackDBPath == "" {
+				configDir, err := config.GetConfigDir()
+				if err != nil {
+					return fmt.Errorf("failed to get config dir: %w", err)
+				}
 
-		src, err := createSourceWithConfig(sourceName, sourceConfig, client)
-		if err != nil {
-			return fmt.Errorf("failed to configure source '%s': %w", sourceName, err)
+				slackDBPath = filepath.Join(configDir, "slack.db")
+			}
+
+			dbSrc, err := slacksource.NewDBSource(slackDBPath)
+			if err != nil {
+				fmt.Printf("Warning: cannot open slack archive for '%s': %v, skipping\n", sourceName, err)
+
+				continue
+			}
+
+			src = dbSrc
+
+		default:
+			// Force ExtractRecipients for Gmail sources to get richer embedding metadata.
+			if sourceConfig.Type == "gmail" {
+				sourceConfig.Gmail.ExtractRecipients = true
+			}
+
+			client, err := auth.GetClient()
+			if err != nil {
+				return fmt.Errorf("failed to create authenticated client: %w", err)
+			}
+
+			src, err = createSourceWithConfig(sourceName, sourceConfig, client)
+			if err != nil {
+				return fmt.Errorf("failed to configure source '%s': %w", sourceName, err)
+			}
 		}
 
 		entries = append(entries, syncer.SourceEntry{
