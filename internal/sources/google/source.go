@@ -246,7 +246,12 @@ func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.FullI
 		calendarID = "primary"
 	}
 
-	events, err := g.calendarService.GetEventsInRange(calendarID, since, time.Now().AddDate(0, 1, 0), int64(limit))
+	calLimit := int64(limit)
+	if calLimit < 0 {
+		calLimit = 0 // 0 = no limit in Calendar API
+	}
+
+	events, err := g.calendarService.GetEventsInRange(calendarID, since, time.Now().AddDate(0, 1, 0), calLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch calendar events: %w", err)
 	}

@@ -141,14 +141,18 @@ func (s *Service) GetEventsInRange(
 	startTime := start.Format(time.RFC3339)
 	endTime := end.Format(time.RFC3339)
 
-	events, err := s.calendarService.Events.List(calendarID).
+	req := s.calendarService.Events.List(calendarID).
 		ShowDeleted(false).
 		SingleEvents(true).
 		TimeMin(startTime).
 		TimeMax(endTime).
-		MaxResults(maxResults).
-		OrderBy("startTime").
-		Do()
+		OrderBy("startTime")
+
+	if maxResults > 0 {
+		req = req.MaxResults(maxResults)
+	}
+
+	events, err := req.Do()
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve events in range: %w", err)
 	}
