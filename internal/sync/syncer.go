@@ -114,7 +114,7 @@ func (m *MultiSyncer) SyncAll(
 				limit = entry.Limit
 			}
 
-			if limit <= 0 {
+			if limit == 0 {
 				limit = 1000
 			}
 

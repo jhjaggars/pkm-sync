@@ -47,7 +47,7 @@ func (s *DBSource) SupportsRealtime() bool { return false }
 
 // Fetch returns Slack messages from the local archive newer than since, up to limit items.
 func (s *DBSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) {
-	// limit <= 0 means unlimited — appropriate for local DB sources.
+	// limit < 0 means unlimited — appropriate for local DB sources.
 	var (
 		rows *sql.Rows
 		err  error
