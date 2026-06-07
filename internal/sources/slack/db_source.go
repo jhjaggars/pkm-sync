@@ -30,6 +30,7 @@ func NewDBSource(dbPath string) (*DBSource, error) {
 	var n int
 	if err := db.QueryRow("SELECT COUNT(*) FROM slack_messages LIMIT 1").Scan(&n); err != nil {
 		db.Close()
+
 		return nil, fmt.Errorf("slack archive at %s has no slack_messages table: %w", dbPath, err)
 	}
 
@@ -65,9 +66,11 @@ func (s *DBSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) 
 	} else {
 		rows, err = s.db.Query(baseQuery, since.UTC().Format(time.RFC3339))
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to query slack archive: %w", err)
 	}
+
 	defer rows.Close()
 
 	var items []models.FullItem
@@ -104,14 +107,14 @@ func (s *DBSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) 
 		item.SetCreatedAt(createdAt)
 		item.SetUpdatedAt(createdAt)
 		item.SetMetadata(map[string]interface{}{
-			"channel_id":    channelID,
-			"channel":       channelName,
-			"workspace":     workspace,
-			"author":        author,
-			"thread_ts":     threadTs,
-			"thread_id":     threadID,
+			"channel_id":     channelID,
+			"channel":        channelName,
+			"workspace":      workspace,
+			"author":         author,
+			"thread_ts":      threadTs,
+			"thread_id":      threadID,
 			"is_thread_root": isThreadRoot == 1,
-			"reply_count":   replyCount,
+			"reply_count":    replyCount,
 		})
 
 		if messageURL != "" {

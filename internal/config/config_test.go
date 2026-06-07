@@ -67,6 +67,7 @@ func TestApplyEnvOverrides_EmbeddingsAPIKey(t *testing.T) {
 	tempDir := t.TempDir()
 	originalCustomConfigDir := customConfigDir
 	customConfigDir = tempDir
+
 	defer func() { customConfigDir = originalCustomConfigDir }()
 
 	cfg := GetDefaultConfig()
@@ -86,6 +87,7 @@ func TestApplyEnvOverrides_NoOverrideWhenEnvUnset(t *testing.T) {
 	tempDir := t.TempDir()
 	originalCustomConfigDir := customConfigDir
 	customConfigDir = tempDir
+
 	defer func() { customConfigDir = originalCustomConfigDir }()
 
 	cfg := GetDefaultConfig()

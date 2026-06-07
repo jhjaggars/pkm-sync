@@ -183,6 +183,7 @@ func runIndexCommand(cmd *cobra.Command, args []string) error {
 					entries[i].Since = newest
 				}
 			}
+
 			store.Close()
 		}
 	}
