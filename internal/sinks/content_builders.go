@@ -33,14 +33,15 @@ const (
 
 // Metadata key constants used across content builders.
 const (
-	metaKeyFrom      = "from"
-	metaKeyDateRange = "date_range"
-	metaKeyStart     = "start"
-	metaKeyEnd       = "end"
-	metaKeyMimeType  = "mime_type"
-	metaKeyAttendees = "attendees"
-	metaKeyTo        = "to"
-	metaKeyOwners    = "owners"
+	metaKeyFrom        = "from"
+	metaKeyDateRange   = "date_range"
+	metaKeyStart       = "start"
+	metaKeyEnd         = "end"
+	metaKeyMimeType    = "mime_type"
+	metaKeyAttendees   = "attendees"
+	metaKeyTo          = "to"
+	metaKeyOwners      = "owners"
+	metaKeyWebViewLink = "web_view_link"
 )
 
 // contentBuilder provides source-type-specific content and metadata construction for VectorSink.
@@ -365,7 +366,7 @@ func (b *driveBuilder) buildContent(group *itemGroup) string {
 		sb.WriteString(fmt.Sprintf("Owners: %s\n", strings.Join(owners, ", ")))
 	}
 
-	if webLink, ok := metadata["web_view_link"].(string); ok && webLink != "" {
+	if webLink, ok := metadata[metaKeyWebViewLink].(string); ok && webLink != "" {
 		sb.WriteString(fmt.Sprintf("Link: %s\n", webLink))
 	}
 
@@ -390,7 +391,7 @@ func (b *driveBuilder) buildMetadata(group *itemGroup) map[string]any {
 
 	metadata := group.messages[0].GetMetadata()
 
-	for _, key := range []string{metaKeyMimeType, "web_view_link", metaKeyOwners} {
+	for _, key := range []string{metaKeyMimeType, metaKeyWebViewLink, metaKeyOwners} {
 		if val, ok := metadata[key]; ok {
 			result[key] = val
 		}
