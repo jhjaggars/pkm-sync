@@ -151,7 +151,7 @@ func RunAuth(workspaceURL, configDir string, progress ProgressFunc) (*TokenData,
 func workspaceName(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "slack"
+		return sourceTypeSlack
 	}
 
 	host := u.Hostname()

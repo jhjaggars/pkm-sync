@@ -10,6 +10,11 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const (
+	sourceTypeSlack = "slack"
+	channelParamKey = "channel"
+)
+
 // systemSubtypes are message subtypes that should be filtered out.
 var systemSubtypes = map[string]bool{
 	"channel_join":    true,

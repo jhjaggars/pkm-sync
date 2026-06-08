@@ -97,7 +97,7 @@ func FromSlackMessage(
 
 	ts := tsToTime(msg.Ts)
 
-	tags := []string{"slack", fmt.Sprintf("channel:%s", channelName)}
+	tags := []string{sourceTypeSlack, fmt.Sprintf("channel:%s", channelName)}
 
 	url := messageURL(workspaceURL, channelID, msg.Ts)
 	links := []models.Link{
@@ -125,7 +125,7 @@ func FromSlackMessage(
 		ID:          fmt.Sprintf("slack_%s_%s", channelID, msg.Ts),
 		Title:       title,
 		Content:     content,
-		SourceType:  "slack",
+		SourceType:  sourceTypeSlack,
 		ItemType:    itemType,
 		CreatedAt:   ts,
 		UpdatedAt:   ts,
@@ -133,7 +133,7 @@ func FromSlackMessage(
 		Links:       links,
 		Attachments: []models.Attachment{},
 		Metadata: map[string]any{
-			"channel":        channelName,
+			channelParamKey:  channelName,
 			"channel_id":     channelID,
 			"workspace":      workspaceURL,
 			"author":         author,

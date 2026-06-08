@@ -342,7 +342,7 @@ func extractLabels(metadata map[string]interface{}) []string {
 
 // isGmailItem returns true if the item originated from a Gmail source.
 func isGmailItem(item models.FullItem) bool {
-	return item.GetSourceType() == "gmail"
+	return item.GetSourceType() == sourceTypeGmail
 }
 
 // isThreadItem returns true if the item is a thread (not an individual message).

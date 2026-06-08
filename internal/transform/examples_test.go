@@ -161,7 +161,7 @@ func TestAutoTaggingTransformerNoDuplicates(t *testing.T) {
 func TestFilterTransformer(t *testing.T) {
 	transformer := NewFilterTransformer()
 
-	if transformer.Name() != "filter" {
+	if transformer.Name() != transformerNameFilter {
 		t.Errorf("Expected name 'filter', got '%s'", transformer.Name())
 	}
 

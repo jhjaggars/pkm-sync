@@ -7,6 +7,11 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const (
+	jiraSectionIssueTypes = "Issue Types"
+	jiraSectionStatuses   = "Statuses"
+)
+
 // JiraProvider implements DiscoveryProvider for Jira instances.
 type JiraProvider struct {
 	source *jirasource.JiraSource
@@ -43,8 +48,8 @@ func (p *JiraProvider) Authenticate(cfg *models.Config, sourceID string) error {
 
 // DiscoverySections implements DiscoveryProvider. It returns three sections:
 //   - "Projects" — Jira projects accessible to the authenticated user
-//   - "Issue Types" — issue types from the first configured project (if any)
-//   - "Statuses" — statuses from the first configured project (if any)
+//   - jiraSectionIssueTypes — issue types from the first configured project (if any)
+//   - jiraSectionStatuses — statuses from the first configured project (if any)
 func (p *JiraProvider) DiscoverySections(currentConfig models.SourceConfig) ([]DiscoverySection, error) {
 	if p.source == nil {
 		return nil, fmt.Errorf("not authenticated — call Authenticate first")
@@ -97,7 +102,7 @@ func (p *JiraProvider) DiscoverySections(currentConfig models.SourceConfig) ([]D
 	return sections, nil
 }
 
-// issueTypeSection builds the "Issue Types" DiscoverySection for the given project.
+// issueTypeSection builds the jiraSectionIssueTypes DiscoverySection for the given project.
 func (p *JiraProvider) issueTypeSection(projectKey string, configured []string) DiscoverySection {
 	configuredTypes := make(map[string]bool, len(configured))
 	for _, t := range configured {
@@ -108,7 +113,7 @@ func (p *JiraProvider) issueTypeSection(projectKey string, configured []string) 
 	if err != nil {
 		// Non-fatal: return an empty section rather than failing the whole flow.
 		return DiscoverySection{
-			Name:        "Issue Types",
+			Name:        jiraSectionIssueTypes,
 			Description: fmt.Sprintf("Could not load issue types for project %s: %v", projectKey, err),
 			Options:     nil,
 		}
@@ -124,13 +129,13 @@ func (p *JiraProvider) issueTypeSection(projectKey string, configured []string) 
 	}
 
 	return DiscoverySection{
-		Name:        "Issue Types",
+		Name:        jiraSectionIssueTypes,
 		Description: fmt.Sprintf("Select issue types to include (from project %s; leave empty for all)", projectKey),
 		Options:     opts,
 	}
 }
 
-// statusSection builds the "Statuses" DiscoverySection for the given project.
+// statusSection builds the jiraSectionStatuses DiscoverySection for the given project.
 func (p *JiraProvider) statusSection(projectKey string, configured []string) DiscoverySection {
 	configuredStatuses := make(map[string]bool, len(configured))
 	for _, s := range configured {
@@ -140,7 +145,7 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 	statuses, err := p.source.ListStatuses(projectKey)
 	if err != nil {
 		return DiscoverySection{
-			Name:        "Statuses",
+			Name:        jiraSectionStatuses,
 			Description: fmt.Sprintf("Could not load statuses for project %s: %v", projectKey, err),
 			Options:     nil,
 		}
@@ -156,7 +161,7 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 	}
 
 	return DiscoverySection{
-		Name:        "Statuses",
+		Name:        jiraSectionStatuses,
 		Description: fmt.Sprintf("Select statuses to include (from project %s; leave empty for all)", projectKey),
 		Options:     opts,
 	}
@@ -167,9 +172,9 @@ func (p *JiraProvider) ApplySelections(cfg *models.SourceConfig, sectionName str
 	switch sectionName {
 	case "Projects":
 		cfg.Jira.ProjectKeys = selectedIDs
-	case "Issue Types":
+	case jiraSectionIssueTypes:
 		cfg.Jira.IssueTypes = selectedIDs
-	case "Statuses":
+	case jiraSectionStatuses:
 		cfg.Jira.Statuses = selectedIDs
 	}
 }

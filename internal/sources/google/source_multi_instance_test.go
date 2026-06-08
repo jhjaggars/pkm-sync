@@ -60,7 +60,7 @@ func TestNewGoogleSourceWithConfig(t *testing.T) {
 				Priority: 2,
 				Since:    "7d",
 				Google: models.GoogleSourceConfig{
-					CalendarID:      "primary",
+					CalendarID:      calendarIDPrimary,
 					IncludeDeclined: false,
 					IncludePrivate:  true,
 					DownloadDocs:    true,
@@ -75,7 +75,7 @@ func TestNewGoogleSourceWithConfig(t *testing.T) {
 					Priority: 2,
 					Since:    "7d",
 					Google: models.GoogleSourceConfig{
-						CalendarID:      "primary",
+						CalendarID:      calendarIDPrimary,
 						IncludeDeclined: false,
 						IncludePrivate:  true,
 						DownloadDocs:    true,
@@ -245,7 +245,7 @@ func TestMixedGoogleSources(t *testing.T) {
 		Priority:     1,
 		Since:        "7d",
 		Google: models.GoogleSourceConfig{
-			CalendarID:      "primary",
+			CalendarID:      calendarIDPrimary,
 			IncludeDeclined: false,
 			IncludePrivate:  true,
 			DownloadDocs:    true,
@@ -291,7 +291,7 @@ func TestMixedGoogleSources(t *testing.T) {
 	assert.Equal(t, "emails", gmailSource.config.OutputSubdir)
 
 	// Verify type-specific configurations
-	assert.Equal(t, "primary", calendarSource.config.Google.CalendarID)
+	assert.Equal(t, calendarIDPrimary, calendarSource.config.Google.CalendarID)
 	assert.True(t, calendarSource.config.Google.DownloadDocs)
 	assert.Equal(t, []string{"markdown", "pdf"}, calendarSource.config.Google.DocFormats)
 
@@ -335,7 +335,7 @@ func TestSourceConfigValidation(t *testing.T) {
 				Enabled:  true,
 				Priority: 1,
 				Google: models.GoogleSourceConfig{
-					CalendarID:      "primary",
+					CalendarID:      calendarIDPrimary,
 					IncludeDeclined: false,
 					DownloadDocs:    true,
 					DocFormats:      []string{"markdown"},

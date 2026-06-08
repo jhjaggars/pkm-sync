@@ -37,8 +37,10 @@ func NewSignatureRemovalTransformer() *SignatureRemovalTransformer {
 	}
 }
 
+const transformerNameSignatureRemoval = "signature_removal"
+
 func (t *SignatureRemovalTransformer) Name() string {
-	return "signature_removal"
+	return transformerNameSignatureRemoval
 }
 
 func (t *SignatureRemovalTransformer) Configure(config map[string]interface{}) error {

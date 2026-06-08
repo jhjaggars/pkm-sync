@@ -18,6 +18,8 @@ import (
 
 const (
 	transformerNameAIAnalysis = "ai_analysis"
+	backendTypeCLI            = "cli"
+	backendTypeHTTP           = "http"
 
 	// Metadata keys for AI analysis results.
 	metaKeyAISummary     = "ai_summary"
@@ -265,14 +267,14 @@ func (t *AIAnalysisTransformer) Configure(config map[string]interface{}) error {
 	}
 
 	switch backendType {
-	case "cli":
+	case backendTypeCLI:
 		backend, err := t.buildCLIBackend(config)
 		if err != nil {
 			return err
 		}
 
 		t.backend = backend
-	case "http":
+	case backendTypeHTTP:
 		backend, err := t.buildHTTPBackend(config)
 		if err != nil {
 			return err
@@ -539,7 +541,7 @@ func parseActionItems(s string) []string {
 // --- Config helpers ---
 
 func (t *AIAnalysisTransformer) buildCLIBackend(config map[string]interface{}) (*CLIBackend, error) {
-	cliCfg, _ := config["cli"].(map[string]interface{})
+	cliCfg, _ := config[backendTypeCLI].(map[string]interface{})
 	if cliCfg == nil {
 		return nil, fmt.Errorf("ai_analysis: 'cli' config block required for CLI backend")
 	}
@@ -555,7 +557,7 @@ func (t *AIAnalysisTransformer) buildCLIBackend(config map[string]interface{}) (
 }
 
 func (t *AIAnalysisTransformer) buildHTTPBackend(config map[string]interface{}) (*HTTPBackend, error) {
-	httpCfg, _ := config["http"].(map[string]interface{})
+	httpCfg, _ := config[backendTypeHTTP].(map[string]interface{})
 	if httpCfg == nil {
 		return nil, fmt.Errorf("ai_analysis: 'http' config block required for HTTP backend")
 	}

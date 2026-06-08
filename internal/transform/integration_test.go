@@ -94,7 +94,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 	// Configure the pipeline
 	transformCfg := models.TransformConfig{
 		Enabled:       true,
-		PipelineOrder: []string{"content_cleanup", "auto_tagging", "filter"},
+		PipelineOrder: []string{"content_cleanup", "auto_tagging", transformerNameFilter},
 		ErrorStrategy: "log_and_continue",
 		Transformers: map[string]map[string]interface{}{
 			"auto_tagging": {
@@ -109,7 +109,7 @@ func TestPipelineIntegrationWithSyncEngine(t *testing.T) {
 					},
 				},
 			},
-			"filter": {
+			transformerNameFilter: {
 				"min_content_length": 15,
 			},
 		},

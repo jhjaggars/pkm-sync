@@ -20,6 +20,7 @@ const (
 	driveItemTypeDocument     = "document"
 	driveItemTypeSpreadsheet  = "spreadsheet"
 	driveItemTypePresentation = "presentation"
+	calendarIDPrimary         = "primary"
 )
 
 // driveExporter is the subset of drive.Service used by fetchDrive and convertDriveFile.
@@ -243,7 +244,7 @@ func (g *GoogleSource) fetchCalendar(since time.Time, limit int) ([]models.FullI
 
 	calendarID := g.config.Google.CalendarID
 	if calendarID == "" {
-		calendarID = "primary"
+		calendarID = calendarIDPrimary
 	}
 
 	calLimit := int64(limit)

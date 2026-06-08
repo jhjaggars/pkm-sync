@@ -219,7 +219,7 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 	var sb strings.Builder
 
 	for key, value := range metadata {
-		if key == "attendees" {
+		if key == metaKeyAttendees {
 			sb.WriteString(o.formatAttendees(value))
 		} else if arr, ok := value.([]string); ok {
 			fmt.Fprintf(&sb, "%s:\n", key)

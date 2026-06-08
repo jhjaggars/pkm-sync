@@ -103,12 +103,12 @@ func (s *DBSource) Fetch(since time.Time, limit int) ([]models.FullItem, error) 
 
 		item := models.NewBasicItem(id, channelName)
 		item.SetContent(content)
-		item.SetSourceType("slack")
+		item.SetSourceType(sourceTypeSlack)
 		item.SetCreatedAt(createdAt)
 		item.SetUpdatedAt(createdAt)
 		item.SetMetadata(map[string]interface{}{
 			"channel_id":     channelID,
-			"channel":        channelName,
+			channelParamKey:  channelName,
 			"workspace":      workspace,
 			"author":         author,
 			"thread_ts":      threadTs,

@@ -9,6 +9,15 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const (
+	transformerNameLinkExtraction = "link_extraction"
+	linkTypeExternal              = "external"
+	linkTypeInternal              = "internal"
+	linkTypeDocument              = "document"
+	schemeHTTP                    = "http"
+	schemeHTTPS                   = "https"
+)
+
 // LinkExtractionTransformer extracts URLs from content and populates the Links field.
 // Extracted from Gmail's ContentProcessor.ExtractLinks to be universally available.
 type LinkExtractionTransformer struct {
@@ -28,7 +37,7 @@ func NewLinkExtractionTransformer() *LinkExtractionTransformer {
 }
 
 func (t *LinkExtractionTransformer) Name() string {
-	return "link_extraction"
+	return transformerNameLinkExtraction
 }
 
 func (t *LinkExtractionTransformer) Configure(config map[string]interface{}) error {
@@ -197,13 +206,13 @@ func (t *LinkExtractionTransformer) ExtractLinks(content string) []models.Link {
 	links := make([]models.Link, 0, len(allMatches))
 
 	for _, match := range allMatches {
-		linkType := "external"
+		linkType := linkTypeExternal
 
 		// Determine link type based on URL
 		if t.isInternalLink(match.url) {
-			linkType = "internal"
+			linkType = linkTypeInternal
 		} else if t.isDocumentLink(match.url) {
-			linkType = "document"
+			linkType = linkTypeDocument
 		}
 
 		links = append(links, models.Link{
@@ -302,7 +311,7 @@ func (t *LinkExtractionTransformer) isValidURL(urlStr string) bool {
 	}
 
 	// Must have a scheme (http/https)
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+	if parsedURL.Scheme != schemeHTTP && parsedURL.Scheme != schemeHTTPS {
 		return false
 	}
 

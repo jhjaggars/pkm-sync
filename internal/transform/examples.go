@@ -14,6 +14,8 @@ import (
 // NOTE: ContentFilterTransformer is now implemented in content_filter.go
 // with include/exclude rules, keyword and regex matching.
 
+const transformerNameFilter = "filter"
+
 // FilterTransformer filters items based on criteria.
 type FilterTransformer struct {
 	config map[string]interface{}
@@ -26,7 +28,7 @@ func NewFilterTransformer() *FilterTransformer {
 }
 
 func (t *FilterTransformer) Name() string {
-	return "filter"
+	return transformerNameFilter
 }
 
 func (t *FilterTransformer) Configure(config map[string]interface{}) error {
