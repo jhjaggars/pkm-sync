@@ -34,7 +34,7 @@ ci: lint test build
 .PHONY: lint
 lint: check-golangci-version
 	@echo "🔍 Running linters..."
-	@$(GOLANGCI_LINT) run ./... --timeout=5m
+	@$(GOLANGCI_LINT) run ./... --timeout=5m --no-cache
 
 # Target: lint-full - Runs the golangci-lint linter with all issues shown.
 .PHONY: lint-full
