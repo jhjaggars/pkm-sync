@@ -39,6 +39,8 @@ const (
 	metaKeyEnd       = "end"
 	metaKeyMimeType  = "mime_type"
 	metaKeyAttendees = "attendees"
+	metaKeyTo        = "to"
+	metaKeyOwners    = "owners"
 )
 
 // contentBuilder provides source-type-specific content and metadata construction for VectorSink.
@@ -106,7 +108,7 @@ func (b *gmailBuilder) buildContent(group *itemGroup) string {
 			sb.WriteString(fmt.Sprintf("From: %s\n", from))
 		}
 
-		if to, ok := metadata["to"].(string); ok && to != "" {
+		if to, ok := metadata[metaKeyTo].(string); ok && to != "" {
 			sb.WriteString(fmt.Sprintf("To: %s\n", to))
 		}
 
@@ -140,7 +142,7 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 	for _, item := range group.messages {
 		metadata := item.GetMetadata()
 
-		for _, field := range []string{metaKeyFrom, "to", "cc", "bcc"} {
+		for _, field := range []string{metaKeyFrom, metaKeyTo, "cc", "bcc"} {
 			if val, ok := metadata[field].(string); ok && val != "" {
 				participantsMap[val] = true
 			}
@@ -170,8 +172,8 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 			msgData[metaKeyFrom] = from
 		}
 
-		if to, ok := metadata["to"].(string); ok {
-			msgData["to"] = to
+		if to, ok := metadata[metaKeyTo].(string); ok {
+			msgData[metaKeyTo] = to
 		}
 
 		if cc, ok := metadata["cc"].(string); ok {
@@ -359,7 +361,7 @@ func (b *driveBuilder) buildContent(group *itemGroup) string {
 		sb.WriteString(fmt.Sprintf("Type: %s\n", mimeType))
 	}
 
-	if owners, ok := metadata["owners"].([]string); ok && len(owners) > 0 {
+	if owners, ok := metadata[metaKeyOwners].([]string); ok && len(owners) > 0 {
 		sb.WriteString(fmt.Sprintf("Owners: %s\n", strings.Join(owners, ", ")))
 	}
 
@@ -388,7 +390,7 @@ func (b *driveBuilder) buildMetadata(group *itemGroup) map[string]any {
 
 	metadata := group.messages[0].GetMetadata()
 
-	for _, key := range []string{metaKeyMimeType, "web_view_link", "owners"} {
+	for _, key := range []string{metaKeyMimeType, "web_view_link", metaKeyOwners} {
 		if val, ok := metadata[key]; ok {
 			result[key] = val
 		}
