@@ -300,7 +300,7 @@ func (s *Service) GetRecentSubjects(query string, limit int) ([]string, error) {
 	for _, m := range listResp.Messages {
 		msg, err := s.service.Users.Messages.Get("me", m.Id).
 			Format("metadata").
-			MetadataHeaders("Subject").
+			MetadataHeaders(headerNameSubject).
 			Do()
 		if err != nil {
 			continue
@@ -311,7 +311,7 @@ func (s *Service) GetRecentSubjects(query string, limit int) ([]string, error) {
 		}
 
 		for _, h := range msg.Payload.Headers {
-			if h.Name == "Subject" {
+			if h.Name == headerNameSubject {
 				subjects = append(subjects, h.Value)
 
 				break

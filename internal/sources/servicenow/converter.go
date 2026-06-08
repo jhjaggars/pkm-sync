@@ -12,12 +12,23 @@ import (
 // when sysparm_display_value=true is set.
 const servicenowTimeLayout = "2006-01-02 15:04:05"
 
+// ServiceNow record field names.
+const (
+	fieldNumber          = "number"
+	fieldState           = "state"
+	fieldPriority        = "priority"
+	fieldAssignmentGroup = "assignment_group"
+	fieldAssignedTo      = "assigned_to"
+	fieldOpenedBy        = "opened_by"
+	fieldSysID           = "sys_id"
+)
+
 // recordToItem converts a ServiceNow table record (map from JSON) to a BasicItem.
 // Title is set to the ticket number (e.g. "RITM2300969") so the output filename
 // is "RITM2300969.md", matching the Obsidian vault convention.
 func recordToItem(record map[string]any, table, instanceURL string) models.FullItem {
-	sysID := stringField(record, "sys_id")
-	number := stringField(record, "number")
+	sysID := stringField(record, fieldSysID)
+	number := stringField(record, fieldNumber)
 
 	if number == "" {
 		number = sysID
@@ -62,8 +73,8 @@ func recordToItem(record map[string]any, table, instanceURL string) models.FullI
 	item.Content = strings.TrimSpace(sb.String())
 
 	// Build tags.
-	state := resolveDisplayValue(record, "state")
-	priority := resolveDisplayValue(record, "priority")
+	state := resolveDisplayValue(record, fieldState)
+	priority := resolveDisplayValue(record, fieldPriority)
 
 	if state != "" {
 		item.Tags = append(item.Tags, "state:"+normalizeTag(state))
@@ -77,15 +88,15 @@ func recordToItem(record map[string]any, table, instanceURL string) models.FullI
 
 	// Build metadata.
 	meta := map[string]any{
-		"summary":          shortDesc,
-		"number":           number,
-		"state":            state,
-		"priority":         priority,
-		"table":            table,
-		"assignment_group": resolveDisplayValue(record, "assignment_group"),
-		"assigned_to":      resolveDisplayValue(record, "assigned_to"),
-		"opened_by":        resolveDisplayValue(record, "opened_by"),
-		"sys_id":           sysID,
+		"summary":            shortDesc,
+		fieldNumber:          number,
+		fieldState:           state,
+		fieldPriority:        priority,
+		"table":              table,
+		fieldAssignmentGroup: resolveDisplayValue(record, fieldAssignmentGroup),
+		fieldAssignedTo:      resolveDisplayValue(record, fieldAssignedTo),
+		fieldOpenedBy:        resolveDisplayValue(record, fieldOpenedBy),
+		fieldSysID:           sysID,
 	}
 
 	// Table-specific metadata.

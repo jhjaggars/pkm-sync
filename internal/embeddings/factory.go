@@ -6,12 +6,17 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const (
+	providerOllama = "ollama"
+	providerOpenAI = "openai"
+)
+
 // NewProvider creates a new embedding provider based on the configuration.
 // Returns nil, nil when cfg.Provider is empty — callers treat a nil provider
 // as "metadata-only mode" (document rows are still written; embeddings are not).
 func NewProvider(cfg models.EmbeddingsConfig) (Provider, error) {
 	switch cfg.Provider {
-	case "ollama":
+	case providerOllama:
 		if cfg.APIURL == "" {
 			cfg.APIURL = "http://localhost:11434"
 		}
@@ -26,7 +31,7 @@ func NewProvider(cfg models.EmbeddingsConfig) (Provider, error) {
 
 		return NewOllamaProvider(cfg.APIURL, cfg.Model, cfg.Dimensions), nil
 
-	case "openai":
+	case providerOpenAI:
 		if cfg.APIURL == "" {
 			cfg.APIURL = "https://api.openai.com"
 		}

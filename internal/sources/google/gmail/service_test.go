@@ -224,36 +224,36 @@ func NewMockGmailService() *MockGmailService {
 	return &MockGmailService{
 		messages: []*gmail.Message{
 			{
-				Id:       "msg1",
+				Id:       testMsgID1,
 				ThreadId: "thread1",
-				LabelIds: []string{"INBOX", "IMPORTANT"},
+				LabelIds: []string{labelInbox, labelImportant},
 				Snippet:  "Test message 1",
 				Payload: &gmail.MessagePart{
 					Headers: []*gmail.MessagePartHeader{
-						{Name: "Subject", Value: "Test Subject 1"},
-						{Name: "From", Value: "test1@example.com"},
-						{Name: "To", Value: "recipient@example.com"},
+						{Name: headerNameSubject, Value: "Test Subject 1"},
+						{Name: headerNameFrom, Value: "test1@example.com"},
+						{Name: headerNameTo, Value: "recipient@example.com"},
 					},
 				},
 			},
 			{
 				Id:       "msg2",
 				ThreadId: "thread2",
-				LabelIds: []string{"INBOX", "STARRED"},
+				LabelIds: []string{labelInbox, labelStarred},
 				Snippet:  "Test message 2",
 				Payload: &gmail.MessagePart{
 					Headers: []*gmail.MessagePartHeader{
-						{Name: "Subject", Value: "Test Subject 2"},
-						{Name: "From", Value: "test2@example.com"},
-						{Name: "To", Value: "recipient@example.com"},
+						{Name: headerNameSubject, Value: "Test Subject 2"},
+						{Name: headerNameFrom, Value: "test2@example.com"},
+						{Name: headerNameTo, Value: "recipient@example.com"},
 					},
 				},
 			},
 		},
 		labels: []*gmail.Label{
-			{Id: "INBOX", Name: "INBOX"},
-			{Id: "IMPORTANT", Name: "IMPORTANT"},
-			{Id: "STARRED", Name: "STARRED"},
+			{Id: labelInbox, Name: labelInbox},
+			{Id: labelImportant, Name: labelImportant},
+			{Id: labelStarred, Name: labelStarred},
 		},
 		profile: &gmail.Profile{
 			EmailAddress:  "test@example.com",
@@ -311,12 +311,12 @@ func TestMockGmailService(t *testing.T) {
 	}
 
 	// Test GetMessage
-	msg, err := mock.GetMessage("msg1")
+	msg, err := mock.GetMessage(testMsgID1)
 	if err != nil {
 		t.Errorf("GetMessage() error = %v", err)
 	}
 
-	if msg.Id != "msg1" {
+	if msg.Id != testMsgID1 {
 		t.Errorf("GetMessage() returned message with ID %s, want msg1", msg.Id)
 	}
 

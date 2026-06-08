@@ -10,6 +10,11 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+const (
+	itemTypeDocument = "document"
+	tagResolved      = "resolved"
+)
+
 // driveClient is the subset of drive.Service used by DriveResolver.
 // Defined as an interface so tests can inject a mock without a live Drive API.
 type driveClient interface {
@@ -94,7 +99,7 @@ func (r *DriveResolver) Resolve(_ context.Context, rawURL string) (models.FullIt
 
 	switch meta.MimeType {
 	case drive.MimeTypeGoogleDoc:
-		itemType = "document"
+		itemType = itemTypeDocument
 	case drive.MimeTypeGoogleSheet:
 		itemType = "spreadsheet"
 	case drive.MimeTypeGooglePresentation:
@@ -114,14 +119,14 @@ func (r *DriveResolver) Resolve(_ context.Context, rawURL string) (models.FullIt
 		ItemType:   itemType,
 		CreatedAt:  updatedAt,
 		UpdatedAt:  updatedAt,
-		Tags:       []string{"resolved"},
+		Tags:       []string{tagResolved},
 		Metadata: map[string]interface{}{
 			"mime_type":     meta.MimeType,
 			"web_view_link": meta.WebViewLink,
 			"owners":        meta.Owners,
 		},
 		Links: []models.Link{
-			{URL: rawURL, Title: meta.Name, Type: "document"},
+			{URL: rawURL, Title: meta.Name, Type: itemTypeDocument},
 		},
 	}
 

@@ -10,6 +10,25 @@ import (
 	"google.golang.org/api/gmail/v1"
 )
 
+const (
+	// Mock message IDs.
+	testMsgID1 = "msg1"
+
+	// Email header names used in test data.
+	headerNameSubject   = "Subject"
+	headerNameFrom      = "From"
+	headerNameTo        = "To"
+	headerNameDate      = "Date"
+	headerNameMessageID = "Message-ID"
+
+	// MIME types used in test data.
+	mimeTypeTextPlain = "text/plain"
+
+	// Gmail label types.
+	labelTypeSystem = "system"
+	labelTypeUser   = "user"
+)
+
 // MockService provides a mock implementation of the Gmail service for testing.
 type MockService struct {
 	messages []*gmail.Message
@@ -239,19 +258,19 @@ func getHeaderValue(msg *gmail.Message, headerName string) string {
 func createTestMessages() []*gmail.Message {
 	return []*gmail.Message{
 		{
-			Id:           "msg1",
+			Id:           testMsgID1,
 			ThreadId:     "thread1",
-			LabelIds:     []string{"INBOX", "IMPORTANT"},
+			LabelIds:     []string{labelInbox, labelImportant},
 			Snippet:      "Important work email from company",
 			SizeEstimate: 1024,
 			Payload: &gmail.MessagePart{
 				MimeType: "multipart/alternative",
 				Headers: []*gmail.MessagePartHeader{
-					{Name: "Subject", Value: "Important work update"},
-					{Name: "From", Value: "boss@company.com"},
-					{Name: "To", Value: "employee@company.com"},
-					{Name: "Date", Value: time.Now().Add(-2 * time.Hour).Format(time.RFC1123)},
-					{Name: "Message-ID", Value: "<msg1@company.com>"},
+					{Name: headerNameSubject, Value: "Important work update"},
+					{Name: headerNameFrom, Value: "boss@company.com"},
+					{Name: headerNameTo, Value: "employee@company.com"},
+					{Name: headerNameDate, Value: time.Now().Add(-2 * time.Hour).Format(time.RFC1123)},
+					{Name: headerNameMessageID, Value: "<msg1@company.com>"},
 				},
 				Body: &gmail.MessagePartBody{
 					Data: "VGhpcyBpcyBhbiBpbXBvcnRhbnQgd29yayBlbWFpbA==", // Base64 encoded.
@@ -261,17 +280,17 @@ func createTestMessages() []*gmail.Message {
 		{
 			Id:           "msg2",
 			ThreadId:     "thread2",
-			LabelIds:     []string{"INBOX", "STARRED"},
+			LabelIds:     []string{labelInbox, labelStarred},
 			Snippet:      "Personal starred email",
 			SizeEstimate: 512,
 			Payload: &gmail.MessagePart{
-				MimeType: "text/plain",
+				MimeType: mimeTypeTextPlain,
 				Headers: []*gmail.MessagePartHeader{
-					{Name: "Subject", Value: "Personal important message"},
-					{Name: "From", Value: "friend@personal.com"},
-					{Name: "To", Value: "user@personal.com"},
-					{Name: "Date", Value: time.Now().Add(-4 * time.Hour).Format(time.RFC1123)},
-					{Name: "Message-ID", Value: "<msg2@personal.com>"},
+					{Name: headerNameSubject, Value: "Personal important message"},
+					{Name: headerNameFrom, Value: "friend@personal.com"},
+					{Name: headerNameTo, Value: "user@personal.com"},
+					{Name: headerNameDate, Value: time.Now().Add(-4 * time.Hour).Format(time.RFC1123)},
+					{Name: headerNameMessageID, Value: "<msg2@personal.com>"},
 				},
 				Body: &gmail.MessagePartBody{
 					Data: "VGhpcyBpcyBhIHBlcnNvbmFsIGVtYWls", // Base64 encoded.
@@ -281,17 +300,17 @@ func createTestMessages() []*gmail.Message {
 		{
 			Id:           "msg3",
 			ThreadId:     "thread3",
-			LabelIds:     []string{"INBOX"},
+			LabelIds:     []string{labelInbox},
 			Snippet:      "Newsletter email",
 			SizeEstimate: 2048,
 			Payload: &gmail.MessagePart{
 				MimeType: "text/html",
 				Headers: []*gmail.MessagePartHeader{
-					{Name: "Subject", Value: "Weekly Newsletter"},
-					{Name: "From", Value: "newsletter@noreply.com"},
-					{Name: "To", Value: "user@personal.com"},
-					{Name: "Date", Value: time.Now().Add(-6 * time.Hour).Format(time.RFC1123)},
-					{Name: "Message-ID", Value: "<msg3@noreply.com>"},
+					{Name: headerNameSubject, Value: "Weekly Newsletter"},
+					{Name: headerNameFrom, Value: "newsletter@noreply.com"},
+					{Name: headerNameTo, Value: "user@personal.com"},
+					{Name: headerNameDate, Value: time.Now().Add(-6 * time.Hour).Format(time.RFC1123)},
+					{Name: headerNameMessageID, Value: "<msg3@noreply.com>"},
 				},
 				Body: &gmail.MessagePartBody{
 					Data: "VGhpcyBpcyBhIG5ld3NsZXR0ZXIgZW1haWw=", // Base64 encoded.
@@ -301,17 +320,17 @@ func createTestMessages() []*gmail.Message {
 		{
 			Id:           "msg4",
 			ThreadId:     "thread4",
-			LabelIds:     []string{"INBOX", "UNREAD"},
+			LabelIds:     []string{labelInbox, labelUnread},
 			Snippet:      "Unread work email",
 			SizeEstimate: 768,
 			Payload: &gmail.MessagePart{
 				MimeType: "multipart/mixed",
 				Headers: []*gmail.MessagePartHeader{
-					{Name: "Subject", Value: "Project update with attachment"},
-					{Name: "From", Value: "colleague@company.com"},
-					{Name: "To", Value: "employee@company.com"},
-					{Name: "Date", Value: time.Now().Add(-1 * time.Hour).Format(time.RFC1123)},
-					{Name: "Message-ID", Value: "<msg4@company.com>"},
+					{Name: headerNameSubject, Value: "Project update with attachment"},
+					{Name: headerNameFrom, Value: "colleague@company.com"},
+					{Name: headerNameTo, Value: "employee@company.com"},
+					{Name: headerNameDate, Value: time.Now().Add(-1 * time.Hour).Format(time.RFC1123)},
+					{Name: headerNameMessageID, Value: "<msg4@company.com>"},
 				},
 				Body: &gmail.MessagePartBody{
 					Data: "UHJvamVjdCB1cGRhdGUgd2l0aCBhdHRhY2htZW50", // Base64 encoded.
@@ -334,15 +353,15 @@ func createTestMessages() []*gmail.Message {
 // createTestLabels creates sample test labels.
 func createTestLabels() []*gmail.Label {
 	return []*gmail.Label{
-		{Id: "INBOX", Name: "INBOX", Type: "system"},
-		{Id: "IMPORTANT", Name: "IMPORTANT", Type: "system"},
-		{Id: "STARRED", Name: "STARRED", Type: "system"},
-		{Id: "UNREAD", Name: "UNREAD", Type: "system"},
-		{Id: "SENT", Name: "SENT", Type: "system"},
-		{Id: "DRAFT", Name: "DRAFT", Type: "system"},
-		{Id: "Label_1", Name: "Work", Type: "user"},
-		{Id: "Label_2", Name: "Personal", Type: "user"},
-		{Id: "Label_3", Name: "Projects", Type: "user"},
+		{Id: labelInbox, Name: labelInbox, Type: labelTypeSystem},
+		{Id: labelImportant, Name: labelImportant, Type: labelTypeSystem},
+		{Id: labelStarred, Name: labelStarred, Type: labelTypeSystem},
+		{Id: labelUnread, Name: labelUnread, Type: labelTypeSystem},
+		{Id: labelSent, Name: labelSent, Type: labelTypeSystem},
+		{Id: labelDraft, Name: labelDraft, Type: labelTypeSystem},
+		{Id: "Label_1", Name: "Work", Type: labelTypeUser},
+		{Id: "Label_2", Name: "Personal", Type: labelTypeUser},
+		{Id: "Label_3", Name: "Projects", Type: labelTypeUser},
 	}
 }
 

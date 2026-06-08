@@ -143,7 +143,7 @@ func (tp *ThreadProcessor) consolidateThreads(threadGroups map[string]*ThreadGro
 			ID:         fmt.Sprintf("thread_%s", group.ThreadID),
 			Title:      title,
 			Content:    tp.buildConsolidatedContent(group),
-			SourceType: "gmail",
+			SourceType: sourceTypeGmail,
 			ItemType:   "email_thread",
 			CreatedAt:  group.StartTime,
 			UpdatedAt:  group.EndTime,
@@ -182,7 +182,7 @@ func (tp *ThreadProcessor) summarizeThreads(threadGroups map[string]*ThreadGroup
 			ID:         fmt.Sprintf("thread_summary_%s", group.ThreadID),
 			Title:      title,
 			Content:    tp.buildThreadSummary(group, maxMessages),
-			SourceType: "gmail",
+			SourceType: sourceTypeGmail,
 			ItemType:   "email_thread_summary",
 			CreatedAt:  group.StartTime,
 			UpdatedAt:  group.EndTime,
@@ -499,7 +499,7 @@ func (tp *ThreadProcessor) buildThreadMetadata(group *ThreadGroup) map[string]in
 func (tp *ThreadProcessor) buildThreadTags(group *ThreadGroup) []string {
 	var tags []string
 
-	tags = append(tags, "gmail", "thread")
+	tags = append(tags, sourceTypeGmail, "thread")
 
 	if group.MessageCount > 5 {
 		tags = append(tags, "long-thread")

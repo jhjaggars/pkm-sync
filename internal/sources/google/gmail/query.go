@@ -10,6 +10,15 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// complexQueryKey* are the map keys accepted by BuildComplexQuery.
+const (
+	complexQueryKeyFrom          = "from"
+	complexQueryKeySubject       = "subject"
+	complexQueryKeyHasAttachment = "has_attachment"
+	complexQueryKeyNewerThan     = "newer_than"
+	complexQueryKeyOlderThan     = "older_than"
+)
+
 // buildQuery constructs a Gmail search query based on configuration and since time.
 func buildQuery(config models.GmailSourceConfig, since time.Time) string {
 	var parts []string
@@ -310,7 +319,7 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 	// Add criteria from map.
 	for key, value := range criteria {
 		switch key {
-		case "from":
+		case complexQueryKeyFrom:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("from:%s", v))
 			}
@@ -318,11 +327,11 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("to:%s", v))
 			}
-		case "subject":
+		case complexQueryKeySubject:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("subject:%s", v))
 			}
-		case "has_attachment":
+		case complexQueryKeyHasAttachment:
 			if v, ok := value.(bool); ok && v {
 				parts = append(parts, "has:attachment")
 			}
@@ -334,11 +343,11 @@ func BuildComplexQuery(config models.GmailSourceConfig, criteria map[string]inte
 			if v, ok := value.(bool); ok && v {
 				parts = append(parts, "is:starred")
 			}
-		case "newer_than":
+		case complexQueryKeyNewerThan:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("newer_than:%s", v))
 			}
-		case "older_than":
+		case complexQueryKeyOlderThan:
 			if v, ok := value.(string); ok && v != "" {
 				parts = append(parts, fmt.Sprintf("older_than:%s", v))
 			}

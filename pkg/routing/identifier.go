@@ -66,6 +66,9 @@ func Parse(raw string) ParsedIdentifier {
 	return id
 }
 
+// canonicalServiceNow is the canonical source type string for ServiceNow.
+const canonicalServiceNow = "servicenow"
+
 // sourceTypeAliases maps common short names to canonical source type strings
 // as used in config (e.g. "google_drive", "gmail", etc.).
 var sourceTypeAliases = map[string]string{
@@ -75,8 +78,8 @@ var sourceTypeAliases = map[string]string{
 	"gmail":      "gmail",
 	"jira":       "jira",
 	"slack":      "slack",
-	"snow":       "servicenow",
-	"servicenow": "servicenow",
+	"snow":       canonicalServiceNow,
+	"servicenow": canonicalServiceNow,
 }
 
 // CanonicalSourceType converts a short alias (e.g. "drive") to the canonical

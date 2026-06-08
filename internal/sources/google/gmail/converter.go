@@ -18,6 +18,23 @@ const (
 	threadIDPrefix = "thread_"
 	// largeThreadThreshold is the message count above which a memory warning is logged.
 	largeThreadThreshold = 50
+
+	// sourceTypeGmail is the source type identifier for Gmail items.
+	sourceTypeGmail = "gmail"
+
+	// headerSubject is the email header name for the message subject.
+	headerSubject = "subject"
+
+	// Gmail system label IDs used for tag conversion.
+	labelImportant = "IMPORTANT"
+	labelStarred   = "STARRED"
+	labelUnread    = "UNREAD"
+	labelInbox     = "INBOX"
+	labelSent      = "SENT"
+	labelDraft     = "DRAFT"
+
+	// hasAttachmentCondition is the tagging rule condition for attachment presence.
+	hasAttachmentCondition = "has:attachment"
 )
 
 // EmailRecipient represents an email recipient with name and email.
@@ -60,7 +77,7 @@ func FromGmailMessageWithService(
 		ID:         msg.Id,
 		Title:      subject,
 		Content:    content,
-		SourceType: "gmail",
+		SourceType: sourceTypeGmail,
 		ItemType:   "email",
 		CreatedAt:  createdAt,
 		UpdatedAt:  createdAt, // Gmail doesn't track modifications, use creation date
@@ -105,7 +122,7 @@ func getSubject(msg *gmail.Message) string {
 	}
 
 	for _, header := range msg.Payload.Headers {
-		if strings.ToLower(header.Name) == "subject" {
+		if strings.ToLower(header.Name) == headerSubject {
 			return header.Value
 		}
 	}
@@ -339,23 +356,23 @@ func buildTags(msg *gmail.Message, config models.GmailSourceConfig) []string {
 	var tags []string
 
 	// Add source identifier.
-	tags = append(tags, "gmail")
+	tags = append(tags, sourceTypeGmail)
 
 	// Add labels as tags.
 	for _, labelID := range msg.LabelIds {
 		// Convert system labels to readable tags.
 		switch labelID {
-		case "IMPORTANT":
+		case labelImportant:
 			tags = append(tags, "important")
-		case "STARRED":
+		case labelStarred:
 			tags = append(tags, "starred")
-		case "UNREAD":
+		case labelUnread:
 			tags = append(tags, "unread")
-		case "INBOX":
+		case labelInbox:
 			tags = append(tags, "inbox")
-		case "SENT":
+		case labelSent:
 			tags = append(tags, "sent")
-		case "DRAFT":
+		case labelDraft:
 			tags = append(tags, "draft")
 		default:
 			// Use label as-is for custom labels.
@@ -397,7 +414,7 @@ func matchesCondition(msg *gmail.Message, condition string) bool {
 		return strings.Contains(strings.ToLower(subject), targetSubject)
 	}
 
-	if condition == "has:attachment" {
+	if condition == hasAttachmentCondition {
 		return hasAttachments(msg)
 	}
 
@@ -505,7 +522,7 @@ func FromGmailThread(thread *gmail.Thread, config models.GmailSourceConfig, serv
 		ID:         threadIDPrefix + thread.Id,
 		Title:      subject,
 		Content:    contentBuilder.String(),
-		SourceType: "gmail",
+		SourceType: sourceTypeGmail,
 		ItemType:   "email_thread",
 		CreatedAt:  createdAt,
 		UpdatedAt:  updatedAt,

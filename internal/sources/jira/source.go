@@ -84,7 +84,7 @@ func (s *JiraSource) Configure(_ map[string]any, _ *http.Client) error {
 		s.installation = s.cfg.Installation
 	}
 
-	if s.cfg.AssigneeFilter == "me" {
+	if s.cfg.AssigneeFilter == assigneeFilterMe {
 		me, meErr := s.client.Me()
 		if meErr != nil {
 			return fmt.Errorf("failed to resolve current Jira user: %w", meErr)

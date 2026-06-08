@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// SourceTypeGoogleCalendar is the canonical source type for Google Calendar items.
+const SourceTypeGoogleCalendar = "google_calendar"
+
 // CoreItem provides essential identity and content methods (6 methods).
 type CoreItem interface {
 	GetID() string
@@ -170,7 +173,7 @@ func FromCalendarEvent(event *CalendarEvent) *Item {
 		ID:         event.ID,
 		Title:      event.Summary,
 		Content:    event.Description,
-		SourceType: "google_calendar",
+		SourceType: SourceTypeGoogleCalendar,
 		ItemType:   "event",
 		CreatedAt:  event.Start, // Using start time as creation time for events
 		UpdatedAt:  event.Start, // Using start time since we don't have modified time in CalendarEvent
