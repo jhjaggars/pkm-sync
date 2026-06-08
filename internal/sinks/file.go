@@ -88,6 +88,14 @@ func (s *FileSink) writeItem(item models.FullItem) error {
 		return err
 	}
 
+	// Skip writing if file content is unchanged to avoid bumping mtime.
+	ondisk, err := os.ReadFile(filePath)
+	if err == nil && string(ondisk) == content {
+		slog.Debug("Skipping unchanged file", "path", filePath)
+
+		return nil
+	}
+
 	return os.WriteFile(filePath, []byte(content), 0644)
 }
 
