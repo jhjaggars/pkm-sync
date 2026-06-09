@@ -26,7 +26,13 @@ func NewUserCache(configDir string) *UserCache {
 	return uc
 }
 
+// cachePath returns the location of the cache file. The PKM_SLACK_USER_CACHE
+// environment variable, if set, overrides the default path under configDir.
 func (uc *UserCache) cachePath() string {
+	if path := os.Getenv("PKM_SLACK_USER_CACHE"); path != "" {
+		return path
+	}
+
 	return filepath.Join(uc.configDir, "slack-user-cache.json")
 }
 
