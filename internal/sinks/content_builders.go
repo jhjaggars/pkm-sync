@@ -40,6 +40,8 @@ const (
 	metaKeyMimeType    = "mime_type"
 	metaKeyAttendees   = "attendees"
 	metaKeyTo          = "to"
+	metaKeyCc          = "cc"
+	metaKeyBcc         = "bcc"
 	metaKeyOwners      = "owners"
 	metaKeyWebViewLink = "web_view_link"
 )
@@ -113,11 +115,11 @@ func (b *gmailBuilder) buildContent(group *itemGroup) string {
 			sb.WriteString(fmt.Sprintf("To: %s\n", to))
 		}
 
-		if cc, ok := metadata["cc"].(string); ok && cc != "" {
+		if cc, ok := metadata[metaKeyCc].(string); ok && cc != "" {
 			sb.WriteString(fmt.Sprintf("Cc: %s\n", cc))
 		}
 
-		if bcc, ok := metadata["bcc"].(string); ok && bcc != "" {
+		if bcc, ok := metadata[metaKeyBcc].(string); ok && bcc != "" {
 			sb.WriteString(fmt.Sprintf("Bcc: %s\n", bcc))
 		}
 
@@ -143,7 +145,7 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 	for _, item := range group.messages {
 		metadata := item.GetMetadata()
 
-		for _, field := range []string{metaKeyFrom, metaKeyTo, "cc", "bcc"} {
+		for _, field := range []string{metaKeyFrom, metaKeyTo, metaKeyCc, metaKeyBcc} {
 			if val, ok := metadata[field].(string); ok && val != "" {
 				participantsMap[val] = true
 			}
@@ -177,12 +179,12 @@ func (b *gmailBuilder) buildMetadata(group *itemGroup) map[string]any {
 			msgData[metaKeyTo] = to
 		}
 
-		if cc, ok := metadata["cc"].(string); ok {
-			msgData["cc"] = cc
+		if cc, ok := metadata[metaKeyCc].(string); ok {
+			msgData[metaKeyCc] = cc
 		}
 
-		if bcc, ok := metadata["bcc"].(string); ok {
-			msgData["bcc"] = bcc
+		if bcc, ok := metadata[metaKeyBcc].(string); ok {
+			msgData[metaKeyBcc] = bcc
 		}
 
 		messages[i] = msgData

@@ -14,6 +14,10 @@ import (
 )
 
 const (
+	// Response JSON keys shared by the list-shaped endpoints.
+	jsonKeyCount   = "count"
+	jsonKeyResults = "results"
+
 	defaultSearchLimit = 10
 	defaultEmailLimit  = 10
 	defaultSlackLimit  = 20
@@ -104,7 +108,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"query":         query,
 		"total_results": len(out),
-		"results":       out,
+		jsonKeyResults:  out,
 	})
 }
 
@@ -224,10 +228,10 @@ func (s *Server) handleEmails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"query":   query,
-		"filters": map[string]string{"from": fromAddr, "since": since},
-		"count":   len(results),
-		"results": results,
+		"query":        query,
+		"filters":      map[string]string{"from": fromAddr, "since": since},
+		jsonKeyCount:   len(results),
+		jsonKeyResults: results,
 	})
 }
 
@@ -358,7 +362,7 @@ func (s *Server) handleSlackMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(results), "results": results})
+	writeJSON(w, http.StatusOK, map[string]any{jsonKeyCount: len(results), jsonKeyResults: results})
 }
 
 // loadUserCache reads the Slack user cache (user ID -> display name).
@@ -415,7 +419,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(jobs), "jobs": jobs})
+	writeJSON(w, http.StatusOK, map[string]any{jsonKeyCount: len(jobs), "jobs": jobs})
 }
 
 // readStatusFiles returns the raw bytes of each *.json file in the status

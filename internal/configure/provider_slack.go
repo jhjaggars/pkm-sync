@@ -153,7 +153,7 @@ func (p *SlackProvider) DiscoverySections(currentConfig models.SourceConfig) ([]
 
 	return []DiscoverySection{
 		{
-			Name:        "Channels",
+			Name:        sectionNameChannels,
 			Description: "Select the Slack channels you want to sync",
 			Options:     channelOpts,
 		},
@@ -208,7 +208,7 @@ func (p *SlackProvider) buildChannelGroupOptions(configuredGroups map[string]boo
 // appropriate toggle flags based on which synthetic IDs were selected.
 func (p *SlackProvider) ApplySelections(cfg *models.SourceConfig, sectionName string, selectedIDs []string) {
 	switch sectionName {
-	case "Channels":
+	case sectionNameChannels:
 		// Filter out any mpdm-* names that may have been stored from old configs.
 		filtered := make([]string, 0, len(selectedIDs))
 

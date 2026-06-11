@@ -30,6 +30,14 @@ type DiscoverableOption struct {
 }
 
 // DiscoverySection groups related options for display in the TUI.
+// Section names shared between the generic discovery flow and the
+// per-provider apply functions.
+const (
+	sectionNameChannels = "Channels"
+	sectionNameFolders  = "Folders"
+	sectionNameProjects = "Projects"
+)
+
 type DiscoverySection struct {
 	Name        string // e.g., "Channels", "Labels", "Folders"
 	Description string // prompt text shown above the multi-select
@@ -204,8 +212,8 @@ func RunConfigure(cfg *models.Config, sourceID string, sourceType string) error 
 	for i := range sections {
 		section := &sections[i]
 
-		if (section.Name == "Channels" && sourceType == sourceTypeSlack) ||
-			(section.Name == "Folders" && sourceType == sourceTypeDrive) {
+		if (section.Name == sectionNameChannels && sourceType == sourceTypeSlack) ||
+			(section.Name == sectionNameFolders && sourceType == sourceTypeDrive) {
 			model := NewSortableMultiSelect(section.Name, section.Description, section.Options)
 			p := tea.NewProgram(model, tea.WithAltScreen())
 

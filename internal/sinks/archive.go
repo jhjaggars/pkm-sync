@@ -242,8 +242,8 @@ func buildArchiveMessage(
 	rfc822ID, _ := metadata["message_id"].(string)
 
 	fromAddr := extractFromAddr(metadata)
-	toAddrs := extractAddrList(metadata, "to")
-	ccAddrs := extractAddrList(metadata, "cc")
+	toAddrs := extractAddrList(metadata, metaKeyTo)
+	ccAddrs := extractAddrList(metadata, metaKeyCc)
 	labels := extractLabels(metadata)
 	hasAttachments := len(item.GetAttachments()) > 0
 

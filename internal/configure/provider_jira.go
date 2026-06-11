@@ -78,7 +78,7 @@ func (p *JiraProvider) DiscoverySections(currentConfig models.SourceConfig) ([]D
 
 	sections := []DiscoverySection{
 		{
-			Name:        "Projects",
+			Name:        sectionNameProjects,
 			Description: "Select the Jira projects you want to sync",
 			Options:     projectOpts,
 		},
@@ -170,7 +170,7 @@ func (p *JiraProvider) statusSection(projectKey string, configured []string) Dis
 // ApplySelections implements DiscoveryProvider. It updates the SourceConfig in-place.
 func (p *JiraProvider) ApplySelections(cfg *models.SourceConfig, sectionName string, selectedIDs []string) {
 	switch sectionName {
-	case "Projects":
+	case sectionNameProjects:
 		cfg.Jira.ProjectKeys = selectedIDs
 	case jiraSectionIssueTypes:
 		cfg.Jira.IssueTypes = selectedIDs
