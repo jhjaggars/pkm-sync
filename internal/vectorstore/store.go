@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -88,6 +89,29 @@ func NewStore(dbPath string, dimensions int) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+// NewQueryStore opens an existing vector store for querying only: it skips
+// schema creation and fails when the database file does not exist. The
+// connection itself is read-write (mode=rw) because a WAL-mode SQLite file
+// cannot be reliably opened read-only once its -shm/-wal sidecars have been
+// checkpointed away by the last writer; callers must only issue reads.
+func NewQueryStore(dbPath string, dimensions int) (*Store, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, fmt.Errorf("vector database not available: %w", err)
+	}
+
+	sqlite_vec.Auto()
+
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=rw&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	return &Store{
+		db:         db,
+		dimensions: dimensions,
+	}, nil
 }
 
 // createSchema creates the database schema if it doesn't exist.
