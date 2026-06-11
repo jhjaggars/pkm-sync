@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	gmail "pkm-sync/internal/sources/google/gmail"
 	"pkm-sync/pkg/models"
 
 	"github.com/stretchr/testify/assert"
@@ -193,4 +194,40 @@ func makeGmailItem(id, sourceType string, isThread bool) models.FullItem {
 	}
 
 	return item
+}
+
+// The Gmail source stores typed EmailRecipient values in item metadata; the
+// sink must extract addresses from them (a silent type-switch miss left
+// from_addr/to_addrs/cc_addrs empty for every archived message).
+func TestBuildArchiveMessage_TypedRecipients(t *testing.T) {
+	item := models.NewBasicItem("g1", "Subject line")
+	item.SetMetadata(map[string]interface{}{
+		"thread_id": "th1",
+		"from":      gmail.EmailRecipient{Name: "Alice A", Email: "alice@example.com"},
+		"to": []gmail.EmailRecipient{
+			{Name: "Bob", Email: "bob@example.com"},
+			{Email: "carol@example.com"},
+		},
+		"cc": []gmail.EmailRecipient{{Email: "dave@example.com"}},
+	})
+
+	msg := buildArchiveMessage(item, "g1", "/tmp/g1.eml", "gmail_work", 42)
+
+	assert.Equal(t, `"Alice A" <alice@example.com>`, msg.FromAddr)
+	assert.Equal(t, []string{"bob@example.com", "carol@example.com"}, msg.ToAddrs)
+	assert.Equal(t, []string{"dave@example.com"}, msg.CCAddrs)
+}
+
+// Map-shaped metadata (items that round-tripped through JSON) keeps working.
+func TestBuildArchiveMessage_MapRecipients(t *testing.T) {
+	item := models.NewBasicItem("g2", "Subject line")
+	item.SetMetadata(map[string]interface{}{
+		"from": map[string]interface{}{"name": "", "email": "eve@example.com"},
+		"to":   []interface{}{map[string]interface{}{"email": "frank@example.com"}},
+	})
+
+	msg := buildArchiveMessage(item, "g2", "/tmp/g2.eml", "gmail_work", 1)
+
+	assert.Equal(t, "eve@example.com", msg.FromAddr)
+	assert.Equal(t, []string{"frank@example.com"}, msg.ToAddrs)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"pkm-sync/internal/archive"
+	gmail "pkm-sync/internal/sources/google/gmail"
 	"pkm-sync/pkg/interfaces"
 	"pkm-sync/pkg/models"
 )
@@ -263,25 +264,35 @@ func buildArchiveMessage(
 	}
 }
 
-// extractFromAddr extracts the from address from item metadata.
+// extractFromAddr extracts the from address from item metadata. The Gmail
+// source stores a typed EmailRecipient (items reach sinks unserialized);
+// string and map forms are kept for items that round-tripped through JSON.
 func extractFromAddr(metadata map[string]interface{}) string {
 	switch v := metadata["from"].(type) {
 	case string:
 		return v
+	case gmail.EmailRecipient:
+		return formatRecipient(v.Name, v.Email)
 	case map[string]interface{}:
 		name, _ := v["name"].(string)
 		email, _ := v["email"].(string)
 
-		if name != "" && email != "" {
-			addr := mail.Address{Name: name, Address: email}
-
-			return addr.String()
-		}
-
-		return email
+		return formatRecipient(name, email)
 	}
 
 	return ""
+}
+
+// formatRecipient renders "Name <email>" when both parts are present,
+// otherwise just the email address.
+func formatRecipient(name, email string) string {
+	if name != "" && email != "" {
+		addr := mail.Address{Name: name, Address: email}
+
+		return addr.String()
+	}
+
+	return email
 }
 
 // extractAddrList extracts a list of email addresses from item metadata.
@@ -294,6 +305,16 @@ func extractAddrList(metadata map[string]interface{}, key string) []string {
 	switch v := raw.(type) {
 	case []string:
 		return v
+	case []gmail.EmailRecipient:
+		addrs := make([]string, 0, len(v))
+
+		for _, r := range v {
+			if r.Email != "" {
+				addrs = append(addrs, r.Email)
+			}
+		}
+
+		return addrs
 	case []interface{}:
 		addrs := make([]string, 0, len(v))
 
