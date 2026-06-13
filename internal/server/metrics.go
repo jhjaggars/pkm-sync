@@ -84,12 +84,13 @@ func (s *Server) writePipelineMetrics(b *strings.Builder) {
 }
 
 func (s *Server) writeAgentMetrics(b *strings.Builder) {
-	var lastTS, lastOK, lastWall, tokens, runs7d, errors7d []sample
+	var lastTS, lastOK, lastWall, tokens, runs7d, errors7d, errors3run []sample
 
 	db, err := s.db(s.cfg.MetricsDBPath)
 	if err == nil {
 		lastTS, lastOK, lastWall, tokens = collectLatestAgentRuns(db)
 		runs7d, errors7d = collectAgentAggregates(db)
+		errors3run = collectAgentErrors3Run(db)
 	}
 
 	writeGauge(b, "pkm_agent_last_run_timestamp",
@@ -104,6 +105,8 @@ func (s *Server) writeAgentMetrics(b *strings.Builder) {
 		"Number of agent runs recorded in the last 7 days.", runs7d)
 	writeGauge(b, "pkm_agent_errors_7d_total",
 		"Number of failed/errored agent runs in the last 7 days.", errors7d)
+	writeGauge(b, "pkm_agent_errors_3run_total",
+		"Number of failed/errored runs among the last 3 runs per agent.", errors3run)
 }
 
 // collectLatestAgentRuns reads the most recent run per agent from
@@ -154,6 +157,42 @@ func collectLatestAgentRuns(db *sql.DB) (lastTS, lastOK, lastWall, tokens []samp
 	}
 
 	return lastTS, lastOK, lastWall, tokens
+}
+
+// collectAgentErrors3Run counts failures among the last 3 runs per agent.
+func collectAgentErrors3Run(db *sql.DB) []sample {
+	rows, err := db.Query(`
+		SELECT agent_name,
+		       SUM(CASE WHEN completed = 0 OR error_message IS NOT NULL THEN 1 ELSE 0 END)
+		FROM (
+		    SELECT agent_name, completed, error_message,
+		           ROW_NUMBER() OVER (PARTITION BY agent_name ORDER BY rowid DESC) AS rn
+		    FROM agent_runs
+		)
+		WHERE rn <= 3
+		GROUP BY agent_name
+	`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var samples []sample
+
+	for rows.Next() {
+		var (
+			agent  string
+			errCnt sql.NullFloat64
+		)
+
+		if err := rows.Scan(&agent, &errCnt); err != nil {
+			continue
+		}
+
+		samples = append(samples, sample{[][2]string{{"agent", agent}}, errCnt.Float64})
+	}
+
+	return samples
 }
 
 // collectAgentAggregates reads 7-day run/error counts per agent.

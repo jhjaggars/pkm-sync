@@ -389,6 +389,7 @@ func TestMetrics(t *testing.T) {
 	assert.Contains(t, out, `pkm_agent_runs_7d_total{agent="summarizer"} 2`)
 	assert.Contains(t, out, `pkm_agent_errors_7d_total{agent="summarizer"} 1`)
 	assert.Contains(t, out, `pkm_agent_last_run_tokens{agent="summarizer",kind="prompt"} 500`)
+	assert.Contains(t, out, `pkm_agent_errors_3run_total{agent="summarizer"} 1`)
 
 	// Freshness for all three databases.
 	assert.Contains(t, out, `pkm_source_newest_timestamp{source="slack_redhat",db="vectors"}`)
