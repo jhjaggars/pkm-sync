@@ -23,6 +23,10 @@ type sample struct {
 	value  float64
 }
 
+// agentLabelKey is the Prometheus label name used for the agent_name
+// dimension across the pkm_agent_* metrics.
+const agentLabelKey = "agent"
+
 // handleMetrics renders all metrics in the Prometheus text exposition format,
 // rebuilt from the data files on every scrape. All reads are best-effort:
 // missing or corrupt files produce empty metric sets, never errors.
@@ -141,7 +145,7 @@ func collectLatestAgentRuns(db *sql.DB) (lastTS, lastOK, lastWall, tokens []samp
 			continue
 		}
 
-		agentLabel := [2]string{"agent", agent}
+		agentLabel := [2]string{agentLabelKey, agent}
 
 		if ts, ok := parseTimestamp(runDate.String); ok {
 			lastTS = append(lastTS, sample{[][2]string{agentLabel}, ts})
@@ -189,7 +193,7 @@ func collectAgentErrors3Run(db *sql.DB) []sample {
 			continue
 		}
 
-		samples = append(samples, sample{[][2]string{{"agent", agent}}, errCnt.Float64})
+		samples = append(samples, sample{[][2]string{{agentLabelKey, agent}}, errCnt.Float64})
 	}
 
 	return samples
@@ -220,7 +224,7 @@ func collectAgentAggregates(db *sql.DB) (runs7d, errors7d []sample) {
 			continue
 		}
 
-		agentLabel := [][2]string{{"agent", agent}}
+		agentLabel := [][2]string{{agentLabelKey, agent}}
 		runs7d = append(runs7d, sample{agentLabel, runs.Float64})
 		errors7d = append(errors7d, sample{agentLabel, errCnt.Float64})
 	}
