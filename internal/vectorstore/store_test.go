@@ -1,6 +1,7 @@
 package vectorstore
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -545,5 +546,162 @@ func TestStore_NewestDocumentTimeBySource(t *testing.T) {
 
 	if !ts.Equal(newer) {
 		t.Errorf("expected %v for slack_redhat, got %v", newer, ts)
+	}
+}
+
+// TestStore_UpsertDocument_TimestampsAreUTCZFormatted guards against the
+// regression where CreatedAt/UpdatedAt were formatted with time.RFC3339
+// without calling .UTC() first: a Document built from a Time in a non-UTC
+// Location would persist a local-offset suffix (e.g. "-04:00") instead of
+// "Z", breaking lexicographic SQL MIN()/MAX() comparisons against rows
+// written while the process happened to be in UTC.
+func TestStore_UpsertDocument_TimestampsAreUTCZFormatted(t *testing.T) {
+	store, err := NewStore(":memory:", 0)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	loc := time.FixedZone("UTC-4", -4*60*60)
+	localTime := time.Date(2026, 7, 11, 15, 30, 13, 0, loc)
+
+	doc := Document{
+		SourceID:   "msg1",
+		ThreadID:   "thread1",
+		SourceType: "gmail",
+		SourceName: "gmail_work",
+		Metadata:   map[string]interface{}{},
+		CreatedAt:  localTime,
+		UpdatedAt:  localTime,
+	}
+
+	if err := store.UpsertDocument(doc, nil); err != nil {
+		t.Fatalf("failed to upsert document: %v", err)
+	}
+
+	var createdAtStr, updatedAtStr, indexedAtStr string
+
+	err = store.db.QueryRow(
+		"SELECT created_at, updated_at, indexed_at FROM documents WHERE thread_id = ?", "thread1",
+	).Scan(&createdAtStr, &updatedAtStr, &indexedAtStr)
+	if err != nil {
+		t.Fatalf("failed to query raw timestamps: %v", err)
+	}
+
+	for name, raw := range map[string]string{
+		"created_at": createdAtStr,
+		"updated_at": updatedAtStr,
+		"indexed_at": indexedAtStr,
+	} {
+		if !strings.HasSuffix(raw, "Z") {
+			t.Errorf("%s = %q, want Z-suffixed UTC RFC3339", name, raw)
+		}
+	}
+
+	wantCreated := localTime.UTC().Format(time.RFC3339)
+	if createdAtStr != wantCreated {
+		t.Errorf("created_at = %q, want %q", createdAtStr, wantCreated)
+	}
+}
+
+func TestStore_NormalizeTimestamps(t *testing.T) {
+	store, err := NewStore(":memory:", 0)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Seed rows directly with mixed formats, bypassing UpsertDocument, to
+	// simulate the pre-fix production data: some rows already Z-suffixed,
+	// some carrying a local offset in one or both timestamp columns.
+	seed := []struct {
+		threadID, createdAt, updatedAt string
+	}{
+		{"t-good", "2026-07-10T10:00:00Z", "2026-07-10T10:00:00Z"},
+		{"t-bad-created", "2026-07-11T15:30:13-04:00", "2026-07-11T19:30:13Z"},
+		{"t-bad-both", "2026-07-11T09:00:00-04:00", "2026-07-11T09:05:00-04:00"},
+	}
+
+	for _, s := range seed {
+		_, err := store.db.Exec(
+			`INSERT INTO documents (source_id, thread_id, source_name, created_at, updated_at)
+			 VALUES (?, ?, 'gmail_work', ?, ?)`,
+			s.threadID, s.threadID, s.createdAt, s.updatedAt,
+		)
+		if err != nil {
+			t.Fatalf("failed to seed row %s: %v", s.threadID, err)
+		}
+	}
+
+	// Dry run must report the would-be fixes without writing anything.
+	dryResult, err := store.NormalizeTimestamps(true)
+	if err != nil {
+		t.Fatalf("dry-run NormalizeTimestamps failed: %v", err)
+	}
+
+	if dryResult.RowsScanned != 3 {
+		t.Errorf("dry-run RowsScanned = %d, want 3", dryResult.RowsScanned)
+	}
+
+	if dryResult.CreatedAtFixed != 2 {
+		t.Errorf("dry-run CreatedAtFixed = %d, want 2", dryResult.CreatedAtFixed)
+	}
+
+	if dryResult.UpdatedAtFixed != 1 {
+		t.Errorf("dry-run UpdatedAtFixed = %d, want 1", dryResult.UpdatedAtFixed)
+	}
+
+	assertRaw := func(threadID, wantCreated, wantUpdated string) {
+		t.Helper()
+
+		var createdAtStr, updatedAtStr string
+
+		err := store.db.QueryRow(
+			"SELECT created_at, updated_at FROM documents WHERE thread_id = ?", threadID,
+		).Scan(&createdAtStr, &updatedAtStr)
+		if err != nil {
+			t.Fatalf("failed to query row %s: %v", threadID, err)
+		}
+
+		if createdAtStr != wantCreated {
+			t.Errorf("%s created_at = %q, want %q (unchanged during dry-run)", threadID, createdAtStr, wantCreated)
+		}
+
+		if updatedAtStr != wantUpdated {
+			t.Errorf("%s updated_at = %q, want %q (unchanged during dry-run)", threadID, updatedAtStr, wantUpdated)
+		}
+	}
+
+	// Dry-run must not have written anything.
+	assertRaw("t-bad-created", "2026-07-11T15:30:13-04:00", "2026-07-11T19:30:13Z")
+	assertRaw("t-bad-both", "2026-07-11T09:00:00-04:00", "2026-07-11T09:05:00-04:00")
+
+	// Real run applies the fixes.
+	result, err := store.NormalizeTimestamps(false)
+	if err != nil {
+		t.Fatalf("NormalizeTimestamps failed: %v", err)
+	}
+
+	if result.CreatedAtFixed != 2 || result.UpdatedAtFixed != 1 {
+		t.Errorf("got CreatedAtFixed=%d UpdatedAtFixed=%d, want 2 and 1", result.CreatedAtFixed, result.UpdatedAtFixed)
+	}
+
+	assertRaw("t-good", "2026-07-10T10:00:00Z", "2026-07-10T10:00:00Z")
+	assertRaw("t-bad-created", "2026-07-11T19:30:13Z", "2026-07-11T19:30:13Z")
+	assertRaw("t-bad-both", "2026-07-11T13:00:00Z", "2026-07-11T13:05:00Z")
+
+	// Idempotency: running again finds nothing left to fix.
+	second, err := store.NormalizeTimestamps(false)
+	if err != nil {
+		t.Fatalf("second NormalizeTimestamps failed: %v", err)
+	}
+
+	if second.CreatedAtFixed != 0 || second.UpdatedAtFixed != 0 {
+		t.Errorf("second run: got CreatedAtFixed=%d UpdatedAtFixed=%d, want 0 and 0",
+			second.CreatedAtFixed, second.UpdatedAtFixed)
+	}
+
+	if second.RowsScanned != 3 {
+		t.Errorf("second run: RowsScanned = %d, want 3", second.RowsScanned)
 	}
 }

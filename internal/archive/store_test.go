@@ -3,6 +3,7 @@ package archive
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,6 +151,35 @@ func TestUpdateSyncState(t *testing.T) {
 func TestNewStore_InvalidPath(t *testing.T) {
 	_, err := NewStore("/nonexistent/deeply/nested/path/archive.db")
 	assert.Error(t, err)
+}
+
+// TestIndexMessage_DateArchivedIsUTCZFormatted guards against the regression
+// where date_archived came from SQLite's CURRENT_TIMESTAMP (space-separated
+// "YYYY-MM-DD HH:MM:SS", no "Z") while date_sent in the same row is
+// Go-formatted RFC3339-Z. Mixed formats in the same table sort incorrectly
+// under lexicographic comparison (used by MAX(date_archived) in
+// collectArchiveFreshness), so both columns must share one shape.
+func TestIndexMessage_DateArchivedIsUTCZFormatted(t *testing.T) {
+	store := newTestStore(t)
+
+	require.NoError(t, store.IndexMessage(testMessage("dateformat1"), "body"))
+
+	var dateSentStr, dateArchivedStr string
+
+	err := store.db.QueryRow(
+		"SELECT date_sent, date_archived FROM messages WHERE gmail_id = ?", "dateformat1",
+	).Scan(&dateSentStr, &dateArchivedStr)
+	require.NoError(t, err)
+
+	assert.True(t, strings.HasSuffix(dateSentStr, "Z"), "date_sent = %q, want Z-suffixed UTC RFC3339", dateSentStr)
+	assert.True(t, strings.HasSuffix(dateArchivedStr, "Z"),
+		"date_archived = %q, want Z-suffixed UTC RFC3339", dateArchivedStr)
+
+	// Both columns must parse as RFC3339.
+	_, err = time.Parse(time.RFC3339, dateSentStr)
+	assert.NoError(t, err)
+	_, err = time.Parse(time.RFC3339, dateArchivedStr)
+	assert.NoError(t, err)
 }
 
 // helpers

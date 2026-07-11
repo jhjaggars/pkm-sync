@@ -182,9 +182,21 @@ func (s *Store) UpsertDocument(doc Document, embedding []float32) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	// Format timestamps as RFC3339 for consistent parsing
-	createdAtStr := doc.CreatedAt.Format(time.RFC3339)
-	updatedAtStr := doc.UpdatedAt.Format(time.RFC3339)
+	// Format timestamps as UTC RFC3339 (Z-suffixed) for consistent parsing and,
+	// critically, so that SQL MIN()/MAX() string comparisons (Stats,
+	// NewestDocumentTimeBySource, inferLastSynced, and the /metrics freshness
+	// gauges) sort correctly. Formatting without .UTC() first would preserve
+	// whatever Location the Time carried (e.g. the process's local zone),
+	// producing offset-suffixed strings that don't lexicographically compare
+	// the same as "Z" strings — same bug class as CURRENT_TIMESTAMP below.
+	createdAtStr := doc.CreatedAt.UTC().Format(time.RFC3339)
+	updatedAtStr := doc.UpdatedAt.UTC().Format(time.RFC3339)
+	// indexed_at used to rely on SQLite's CURRENT_TIMESTAMP, which formats as
+	// "YYYY-MM-DD HH:MM:SS" (no "T", no "Z") — incompatible with the
+	// time.RFC3339 layout Search() parses it with, so it always failed to
+	// parse and IndexedAt silently came back zero-valued. Format it the same
+	// way as the other two columns instead.
+	indexedAtStr := time.Now().UTC().Format(time.RFC3339)
 
 	// Upsert document
 	result, err := tx.Exec(`
@@ -192,7 +204,7 @@ func (s *Store) UpsertDocument(doc Document, embedding []float32) error {
 			source_id, thread_id, title, content, source_type, source_name,
 			message_count, metadata, created_at, updated_at, indexed_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(thread_id, source_name) DO UPDATE SET
 			source_id = excluded.source_id,
 			title = excluded.title,
@@ -202,10 +214,10 @@ func (s *Store) UpsertDocument(doc Document, embedding []float32) error {
 			metadata = excluded.metadata,
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
-			indexed_at = CURRENT_TIMESTAMP
+			indexed_at = excluded.indexed_at
 	`,
 		doc.SourceID, doc.ThreadID, doc.Title, doc.Content, doc.SourceType, doc.SourceName,
-		doc.MessageCount, metadataJSON, createdAtStr, updatedAtStr,
+		doc.MessageCount, metadataJSON, createdAtStr, updatedAtStr, indexedAtStr,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert document: %w", err)
@@ -476,6 +488,143 @@ func (s *Store) Stats() (*StoreStats, error) {
 	}
 
 	return stats, nil
+}
+
+// NormalizeResult summarizes the outcome of NormalizeTimestamps.
+type NormalizeResult struct {
+	RowsScanned    int
+	CreatedAtFixed int
+	UpdatedAtFixed int
+}
+
+// NormalizeTimestamps scans every row in the documents table and rewrites any
+// created_at/updated_at value that is not already in canonical Z-suffixed UTC
+// RFC3339 form. This repairs rows written before UpsertDocument called .UTC()
+// before formatting: those rows carry a local-offset suffix (e.g.
+// "2026-07-11T15:30:13-04:00") instead of "Z", which breaks lexicographic
+// SQL MIN()/MAX() comparisons against correctly-formatted rows.
+//
+// A value is only rewritten when it parses as RFC3339 and its UTC-normalized
+// form differs from the stored string; already-correct rows and unparsable
+// values are left untouched. Re-running after a successful pass therefore
+// finds nothing left to fix, making this safe to run repeatedly (e.g. from a
+// cron) or to re-run after an interrupted pass.
+//
+// When dryRun is true no writes are made — the returned counts describe what
+// would change so callers can inspect the impact first.
+func (s *Store) NormalizeTimestamps(dryRun bool) (NormalizeResult, error) {
+	var result NormalizeResult
+
+	rows, err := s.db.Query("SELECT id, created_at, updated_at FROM documents")
+	if err != nil {
+		return result, fmt.Errorf("failed to query documents: %w", err)
+	}
+
+	type pendingFix struct {
+		id                     int64
+		createdAt, updatedAt   string
+		fixCreated, fixUpdated bool
+	}
+
+	var fixes []pendingFix
+
+	for rows.Next() {
+		var (
+			id                         int64
+			createdAtStr, updatedAtStr string
+		)
+
+		if err := rows.Scan(&id, &createdAtStr, &updatedAtStr); err != nil {
+			rows.Close()
+
+			return result, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		result.RowsScanned++
+
+		newCreated, changedCreated, createdErr := normalizeTimestampString(createdAtStr)
+		newUpdated, changedUpdated, updatedErr := normalizeTimestampString(updatedAtStr)
+
+		// Leave rows with unparsable timestamps alone rather than failing the
+		// whole scan — they predate this bug entirely and aren't ours to fix.
+		if createdErr != nil {
+			changedCreated = false
+		}
+
+		if updatedErr != nil {
+			changedUpdated = false
+		}
+
+		if !changedCreated && !changedUpdated {
+			continue
+		}
+
+		fix := pendingFix{id: id}
+
+		if changedCreated {
+			fix.createdAt = newCreated
+			fix.fixCreated = true
+			result.CreatedAtFixed++
+		}
+
+		if changedUpdated {
+			fix.updatedAt = newUpdated
+			fix.fixUpdated = true
+			result.UpdatedAtFixed++
+		}
+
+		fixes = append(fixes, fix)
+	}
+
+	if err := rows.Err(); err != nil {
+		rows.Close()
+
+		return result, err
+	}
+
+	rows.Close()
+
+	if dryRun || len(fixes) == 0 {
+		return result, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return result, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, fix := range fixes {
+		switch {
+		case fix.fixCreated && fix.fixUpdated:
+			_, err = tx.Exec("UPDATE documents SET created_at = ?, updated_at = ? WHERE id = ?",
+				fix.createdAt, fix.updatedAt, fix.id)
+		case fix.fixCreated:
+			_, err = tx.Exec("UPDATE documents SET created_at = ? WHERE id = ?", fix.createdAt, fix.id)
+		case fix.fixUpdated:
+			_, err = tx.Exec("UPDATE documents SET updated_at = ? WHERE id = ?", fix.updatedAt, fix.id)
+		}
+
+		if err != nil {
+			return result, fmt.Errorf("failed to update document %d: %w", fix.id, err)
+		}
+	}
+
+	return result, tx.Commit()
+}
+
+// normalizeTimestampString parses raw as RFC3339 and reformats it in UTC. It
+// reports whether the canonical form differs from the input so callers can
+// skip writes for values that are already correct.
+func normalizeTimestampString(raw string) (normalized string, changed bool, err error) {
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return "", false, fmt.Errorf("parsing timestamp %q: %w", raw, err)
+	}
+
+	normalized = t.UTC().Format(time.RFC3339)
+
+	return normalized, normalized != raw, nil
 }
 
 // Close closes the database connection.

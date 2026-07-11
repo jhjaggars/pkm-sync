@@ -166,6 +166,14 @@ func (s *Store) IndexMessage(msg Message, bodyText string) error {
 	}
 
 	dateSentStr := msg.DateSent.UTC().Format(time.RFC3339)
+	// date_archived used to come from SQLite's CURRENT_TIMESTAMP, which formats
+	// as "YYYY-MM-DD HH:MM:SS" (space-separated, no "Z") — a different shape
+	// than the Go-formatted RFC3339-Z date_sent column in the same row. Mixed
+	// formats in one column sort incorrectly under lexicographic comparison
+	// (' ' < 'T' in ASCII), which bites MAX(date_archived) in
+	// collectArchiveFreshness. Format it the same way as date_sent instead so
+	// both columns share one comparable shape.
+	dateArchivedStr := time.Now().UTC().Format(time.RFC3339)
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -178,14 +186,14 @@ func (s *Store) IndexMessage(msg Message, bodyText string) error {
 			gmail_id, thread_id, rfc822_message_id, subject, from_addr,
 			to_addrs, cc_addrs, date_sent, date_archived,
 			labels, eml_path, size_bytes, has_attachments, source_name
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(gmail_id) DO UPDATE SET
 			eml_path        = excluded.eml_path,
 			size_bytes      = excluded.size_bytes,
-			date_archived   = CURRENT_TIMESTAMP
+			date_archived   = excluded.date_archived
 	`,
 		msg.GmailID, msg.ThreadID, msg.RFC822MessageID, msg.Subject, msg.FromAddr,
-		string(toJSON), string(ccJSON), dateSentStr,
+		string(toJSON), string(ccJSON), dateSentStr, dateArchivedStr,
 		string(labelsJSON), msg.EMLPath, msg.SizeBytes, msg.HasAttachments, msg.SourceName,
 	)
 	if err != nil {
