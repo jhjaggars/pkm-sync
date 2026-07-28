@@ -133,28 +133,48 @@ func (s *VectorSink) indexSource(
 	groups := groupMessagesByThread(items, sourceName, builder)
 	slog.Info("Source grouped", "source", sourceName, "items", len(items), "groups", len(groups))
 
-	// Get already-indexed threads unless reindex is requested
-	var indexedThreads map[string]bool
+	// Get already-indexed threads unless reindex is requested.
+	// We fetch message counts so we can detect threads that have grown
+	// since they were last indexed and re-index them automatically.
+	indexedCounts := make(map[string]int)
 
 	if !s.cfg.Reindex {
-		indexedThreads, err = s.store.GetIndexedThreadIDs(sourceName)
+		indexedCounts, err = s.store.GetIndexedThreadCounts(sourceName)
 		if err != nil {
-			return 0, 0, 0, 0, fmt.Errorf("failed to get indexed threads: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("failed to get indexed thread counts: %w", err)
 		}
 
-		slog.Info("Source already indexed", "source", sourceName, "count", len(indexedThreads))
-	} else {
-		indexedThreads = make(map[string]bool)
+		slog.Info("Source already indexed", "source", sourceName, "count", len(indexedCounts))
 	}
 
-	// Build list of documents to process, skipping already-indexed ones.
+	// Build list of documents to process, skipping already-indexed ones
+	// unless the thread has grown (more messages than when last indexed).
 	pending := make([]pendingDoc, 0, len(groups))
 
 	for threadID, group := range groups {
-		if indexedThreads[threadID] && !s.cfg.Reindex {
-			skipped++
+		storedCount, alreadyIndexed := indexedCounts[threadID]
 
-			continue
+		// currentMessageCount is the true number of messages in this thread.
+		// In thread mode (include_threads: true), FromGmailThread aggregates all
+		// messages into a single FullItem and stores the real count in metadata.
+		// In message mode, len(group.messages) is the actual count.
+		// We prefer the metadata value so thread-mode threads are detected correctly.
+		currentMessageCount := effectiveMessageCount(group)
+
+		if alreadyIndexed {
+			if currentMessageCount <= storedCount {
+				// Thread hasn't grown — skip.
+				skipped++
+
+				continue
+			}
+
+			// Thread has new messages — re-index.
+			slog.Info("Thread has grown, re-indexing",
+				"thread_id", threadID,
+				"stored_count", storedCount,
+				"current_count", currentMessageCount,
+			)
 		}
 
 		content := builder.buildContent(group)
@@ -178,7 +198,7 @@ func (s *VectorSink) indexSource(
 			Content:      content,
 			SourceType:   srcType,
 			SourceName:   sourceName,
-			MessageCount: len(group.messages),
+			MessageCount: currentMessageCount,
 			Metadata:     metadata,
 			CreatedAt:    group.startTime,
 			UpdatedAt:    group.endTime,
@@ -413,4 +433,29 @@ func extractThreadID(item models.FullItem) string {
 	}
 
 	return ""
+}
+
+// effectiveMessageCount returns the true number of email messages represented
+// by a group. In thread mode (include_threads: true), FromGmailThread aggregates
+// all messages into a single FullItem and stores the real count in
+// metadata["message_count"]. Using len(group.messages) alone would always return
+// 1 for thread-mode groups, making staleness detection impossible.
+// In message mode len(group.messages) is correct and metadata is absent.
+func effectiveMessageCount(group *itemGroup) int {
+	if len(group.messages) == 1 {
+		if mc, ok := group.messages[0].GetMetadata()["message_count"]; ok {
+			switch v := mc.(type) {
+			case int:
+				if v > 1 {
+					return v
+				}
+			case float64: // JSON round-trip produces float64
+				if int(v) > 1 {
+					return int(v)
+				}
+			}
+		}
+	}
+
+	return len(group.messages)
 }
