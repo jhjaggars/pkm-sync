@@ -2,6 +2,7 @@ package sinks
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -218,7 +219,14 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 
 	var sb strings.Builder
 
-	for key, value := range metadata {
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		value := metadata[key]
 		if key == "attendees" {
 			sb.WriteString(o.formatAttendees(value))
 		} else if arr, ok := value.([]string); ok {

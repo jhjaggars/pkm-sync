@@ -156,9 +156,21 @@ func runDriveFetchCommand(_ *cobra.Command, args []string) error {
 }
 
 // writeDocToFile writes a markdown document with YAML frontmatter to disk.
+// If the file already exists and content is unchanged, the write is skipped
+// to avoid bumping mtime (which would cause Obsidian dataview "modified today"
+// queries to show false positives on every sync run).
 func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, filePath string) error {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Preserve the original created timestamp if the file already exists,
+	// so rendered content stays stable across refreshes.
+	createdAt := time.Now()
+	if existing, err := os.ReadFile(filePath); err == nil {
+		if t := extractFrontmatterTimestamp(string(existing), "created"); !t.IsZero() {
+			createdAt = t
+		}
 	}
 
 	// Build the item so we get consistent frontmatter via the obsidian formatter.
@@ -168,7 +180,7 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 		SourceType: "drive",
 		ItemType:   "document",
 		Content:    markdown,
-		CreatedAt:  time.Now(),
+		CreatedAt:  createdAt,
 		UpdatedAt:  time.Now(),
 		Metadata: map[string]any{
 			"source_url": sourceURL,
@@ -184,6 +196,11 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 	formatter := sinks.NewObsidianFormatterPublic()
 	content := formatter.FormatItemContent(item)
 
+	// Skip writing if content is unchanged to avoid bumping mtime.
+	if ondisk, err := os.ReadFile(filePath); err == nil && string(ondisk) == content {
+		return nil
+	}
+
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
@@ -191,6 +208,39 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 	fmt.Fprintf(os.Stderr, "Wrote %s\n", filePath)
 
 	return nil
+}
+
+// extractFrontmatterTimestamp reads a YAML frontmatter field as a time.Time.
+// Returns zero time if the field is absent or unparseable.
+func extractFrontmatterTimestamp(content, field string) time.Time {
+	prefix := field + ": "
+	inFrontmatter := false
+
+	for _, line := range strings.SplitAfter(content, "\n") {
+		line = strings.TrimRight(line, "\r\n")
+		if line == "---" {
+			if inFrontmatter {
+				break
+			}
+
+			inFrontmatter = true
+
+			continue
+		}
+
+		if inFrontmatter && strings.HasPrefix(line, prefix) {
+			val := strings.TrimPrefix(line, prefix)
+			val = strings.Trim(val, "\"")
+
+			for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02"} {
+				if t, err := time.Parse(layout, val); err == nil {
+					return t
+				}
+			}
+		}
+	}
+
+	return time.Time{}
 }
 
 // writeRawToFile writes non-markdown content directly to a file.
