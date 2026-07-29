@@ -77,7 +77,8 @@ func (uc *UserCache) ResolveUser(userID string, client *Client) string {
 
 	name, err := client.GetUserInfo(userID)
 	if err != nil {
-		name = userID
+		// Do not cache failed lookups — transient errors should remain retryable.
+		return userID
 	}
 
 	uc.entries[userID] = name

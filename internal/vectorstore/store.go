@@ -400,6 +400,39 @@ func (s *Store) NewestDocumentTimeBySource(sourceName string) (time.Time, error)
 	return t, nil
 }
 
+// GetIndexedThreadCounts returns a map of threadID → stored message_count for
+// all threads belonging to sourceName. This allows callers to detect when a
+// previously-indexed thread has grown and needs re-indexing.
+func (s *Store) GetIndexedThreadCounts(sourceName string) (map[string]int, error) {
+	// GROUP BY + MAX guards against legacy duplicate rows that predate the
+	// UNIQUE(thread_id, source_name) constraint.
+	rows, err := s.db.Query(
+		"SELECT thread_id, MAX(message_count) FROM documents WHERE source_name = ? GROUP BY thread_id",
+		sourceName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query indexed thread counts: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+
+	for rows.Next() {
+		var (
+			threadID string
+			count    int
+		)
+
+		if err := rows.Scan(&threadID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan thread count: %w", err)
+		}
+
+		counts[threadID] = count
+	}
+
+	return counts, rows.Err()
+}
+
 // Stats returns statistics about the vector store.
 func (s *Store) Stats() (*StoreStats, error) {
 	stats := &StoreStats{

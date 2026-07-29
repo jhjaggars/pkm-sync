@@ -627,15 +627,15 @@ func (s *Service) GetMessagesStream(since time.Time, batchSize int, callback fun
 	return nil
 }
 
+// gmailThreadsAPIPageSize is the maximum number of thread stubs the Gmail
+// Threads.List API will return in a single response (hard server limit).
+const gmailThreadsAPIPageSize = 500
+
 // GetThreads retrieves threads based on the configured filters and time range.
+// It paginates through all result pages so callers receive up to `limit` threads
+// even when the result set exceeds the API's per-page cap of 500.
 func (s *Service) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error) {
 	query := s.buildQuery(since)
-
-	slog.Info("Gmail thread query built",
-		"source_id", s.sourceID,
-		"query", query,
-		"since", since.Format("2006-01-02"),
-		"limit", limit)
 
 	if limit <= 0 {
 		limit = 100
@@ -645,31 +645,73 @@ func (s *Service) GetThreads(since time.Time, limit int) ([]*gmail.Thread, error
 		limit = s.config.MaxRequests
 	}
 
-	req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(limit))
-
-	resp, err := s.executeWithRetry(func() (interface{}, error) {
-		return req.Do()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to list threads: %w", err)
-	}
-
-	listResp, ok := resp.(*gmail.ListThreadsResponse)
-	if !ok || listResp == nil {
-		return nil, fmt.Errorf("unexpected response type from Gmail Threads API")
-	}
-
-	slog.Info("Gmail Threads API response",
+	slog.Info("Gmail thread query built",
 		"source_id", s.sourceID,
-		"threads_found", len(listResp.Threads),
-		"query", query)
+		"query", query,
+		"since", since.Format("2006-01-02"),
+		"limit", limit)
 
-	if len(listResp.Threads) == 0 {
+	// The Gmail Threads.List API caps maxResults at 500 per page.
+	// We paginate until we have enough threads or there are no more pages.
+	pageSize := gmailThreadsAPIPageSize
+	if limit < pageSize {
+		pageSize = limit
+	}
+
+	var (
+		allStubs  []*gmail.Thread
+		pageToken string
+	)
+
+	for {
+		remaining := limit - len(allStubs)
+		if remaining <= 0 {
+			break
+		}
+
+		batch := pageSize
+		if remaining < batch {
+			batch = remaining
+		}
+
+		req := s.service.Users.Threads.List("me").Q(query).MaxResults(int64(batch))
+		if pageToken != "" {
+			req = req.PageToken(pageToken)
+		}
+
+		resp, err := s.executeWithRetry(func() (interface{}, error) {
+			return req.Do()
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unable to list threads: %w", err)
+		}
+
+		listResp, ok := resp.(*gmail.ListThreadsResponse)
+		if !ok || listResp == nil {
+			return nil, fmt.Errorf("unexpected response type from Gmail Threads API")
+		}
+
+		allStubs = append(allStubs, listResp.Threads...)
+
+		slog.Info("Gmail Threads API response",
+			"source_id", s.sourceID,
+			"page_threads", len(listResp.Threads),
+			"total_so_far", len(allStubs),
+			"query", query)
+
+		if listResp.NextPageToken == "" || len(listResp.Threads) == 0 {
+			break
+		}
+
+		pageToken = listResp.NextPageToken
+	}
+
+	if len(allStubs) == 0 {
 		return []*gmail.Thread{}, nil
 	}
 
 	// Fetch full thread details concurrently.
-	threads, skippedCount := s.fetchThreadsConcurrently(listResp.Threads)
+	threads, skippedCount := s.fetchThreadsConcurrently(allStubs)
 
 	if skippedCount > 0 {
 		slog.Info("Thread retrieval completed", "retrieved", len(threads), "skipped", skippedCount)
