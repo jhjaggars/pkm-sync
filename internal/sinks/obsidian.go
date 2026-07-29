@@ -223,6 +223,7 @@ func (o *obsidianFormatter) formatMetadata(metadata map[string]any) string {
 	for key := range metadata {
 		keys = append(keys, key)
 	}
+
 	sort.Strings(keys)
 
 	for _, key := range keys {

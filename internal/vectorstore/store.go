@@ -418,8 +418,10 @@ func (s *Store) GetIndexedThreadCounts(sourceName string) (map[string]int, error
 	counts := make(map[string]int)
 
 	for rows.Next() {
-		var threadID string
-		var count int
+		var (
+			threadID string
+			count    int
+		)
 
 		if err := rows.Scan(&threadID, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan thread count: %w", err)

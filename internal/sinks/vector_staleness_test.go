@@ -10,10 +10,14 @@ import (
 	"pkm-sync/pkg/models"
 )
 
-// mustIndexSource calls indexSource and fatals on error, discarding count return values.
-// The count returns are intentionally ignored; this helper exists solely to avoid
-// dogsled violations at call sites where only the error matters.
-func mustIndexSource(t *testing.T, sink *VectorSink, ctx context.Context, sourceName string, items []models.FullItem) {
+// indexResult holds the count returns from indexSource for call sites that
+// need to assert on them, avoiding dogsled violations from blank identifiers.
+type indexResult struct {
+	indexed, metaOnly, skipped, failed int
+}
+
+// mustIndexSource calls indexSource, fatals on error, and returns the counts.
+func mustIndexSource(t *testing.T, sink *VectorSink, ctx context.Context, sourceName string, items []models.FullItem) indexResult {
 	t.Helper()
 
 	indexed, metaOnly, skipped, failed, err := sink.indexSource(ctx, sourceName, items)
@@ -21,11 +25,7 @@ func mustIndexSource(t *testing.T, sink *VectorSink, ctx context.Context, source
 		t.Fatalf("indexSource(%q): %v", sourceName, err)
 	}
 
-	// Explicitly discard counts to satisfy the compiler; counts are not under test here.
-	_ = indexed
-	_ = metaOnly
-	_ = skipped
-	_ = failed
+	return indexResult{indexed: indexed, metaOnly: metaOnly, skipped: skipped, failed: failed}
 }
 
 // newTestVectorSink creates a VectorSink backed by a temp on-disk DB (no embeddings).
@@ -85,34 +85,26 @@ func TestIndexSource_SkipsUnchangedThreads(t *testing.T) {
 	items := makeGmailItems("thread-abc", 3)
 
 	// First index.
-	indexed, metaOnly, skipped, failed, err := sink.indexSource(ctx, "gmail_work", items)
-	if err != nil {
-		t.Fatalf("first indexSource failed: %v", err)
+	first := mustIndexSource(t, sink, ctx, "gmail_work", items)
+
+	if first.skipped != 0 {
+		t.Errorf("first pass: expected 0 skipped, got %d", first.skipped)
 	}
 
-	if skipped != 0 {
-		t.Errorf("first pass: expected 0 skipped, got %d", skipped)
-	}
-
-	if indexed+metaOnly != 1 {
-		t.Errorf("first pass: expected 1 document written, got indexed=%d metaOnly=%d", indexed, metaOnly)
+	if first.indexed+first.metaOnly != 1 {
+		t.Errorf("first pass: expected 1 document written, got indexed=%d metaOnly=%d", first.indexed, first.metaOnly)
 	}
 
 	// Second index with same items — should be skipped entirely.
-	_, _, skipped2, failed2, err := sink.indexSource(ctx, "gmail_work", items)
-	if err != nil {
-		t.Fatalf("second indexSource failed: %v", err)
+	second := mustIndexSource(t, sink, ctx, "gmail_work", items)
+
+	if second.skipped != 1 {
+		t.Errorf("second pass: expected 1 skipped, got %d", second.skipped)
 	}
 
-	if skipped2 != 1 {
-		t.Errorf("second pass: expected 1 skipped, got %d", skipped2)
+	if second.failed != 0 {
+		t.Errorf("second pass: expected 0 failed, got %d", second.failed)
 	}
-
-	if failed2 != 0 {
-		t.Errorf("second pass: expected 0 failed, got %d", failed2)
-	}
-
-	_ = failed // suppress unused warning from first pass
 }
 
 // TestIndexSource_ReindexesGrownThreads verifies that a thread with more messages
@@ -139,17 +131,14 @@ func TestIndexSource_ReindexesGrownThreads(t *testing.T) {
 
 	// Second index with 5 messages — thread has grown.
 	items5 := makeGmailItems("thread-xyz", 5)
-	_, metaOnly, skipped, _, err := sink.indexSource(ctx, "gmail_work", items5)
-	if err != nil {
-		t.Fatalf("second indexSource failed: %v", err)
+	res := mustIndexSource(t, sink, ctx, "gmail_work", items5)
+
+	if res.skipped != 0 {
+		t.Errorf("grown thread should not be skipped, got skipped=%d", res.skipped)
 	}
 
-	if skipped != 0 {
-		t.Errorf("grown thread should not be skipped, got skipped=%d", skipped)
-	}
-
-	if metaOnly != 1 {
-		t.Errorf("grown thread should produce 1 metadata-only write, got %d", metaOnly)
+	if res.metaOnly != 1 {
+		t.Errorf("grown thread should produce 1 metadata-only write, got %d", res.metaOnly)
 	}
 
 	// Verify stored count updated to 5.
@@ -174,13 +163,10 @@ func TestIndexSource_SkipsSameSizeThread(t *testing.T) {
 
 	mustIndexSource(t, sink, ctx, "gmail_work", items)
 
-	_, _, skipped, _, err := sink.indexSource(ctx, "gmail_work", items)
-	if err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
+	res := mustIndexSource(t, sink, ctx, "gmail_work", items)
 
-	if skipped != 1 {
-		t.Errorf("expected thread with unchanged count to be skipped, got skipped=%d", skipped)
+	if res.skipped != 1 {
+		t.Errorf("expected thread with unchanged count to be skipped, got skipped=%d", res.skipped)
 	}
 }
 
@@ -198,17 +184,14 @@ func TestIndexSource_ReindexFlagBypassesStalenessCheck(t *testing.T) {
 	// Enable reindex flag.
 	sink.cfg.Reindex = true
 
-	_, metaOnly, skipped, _, err := sink.indexSource(ctx, "gmail_work", items)
-	if err != nil {
-		t.Fatalf("reindex pass: %v", err)
+	res := mustIndexSource(t, sink, ctx, "gmail_work", items)
+
+	if res.skipped != 0 {
+		t.Errorf("--reindex should skip nothing, got skipped=%d", res.skipped)
 	}
 
-	if skipped != 0 {
-		t.Errorf("--reindex should skip nothing, got skipped=%d", skipped)
-	}
-
-	if metaOnly != 1 {
-		t.Errorf("--reindex should write 1 doc, got metaOnly=%d", metaOnly)
+	if res.metaOnly != 1 {
+		t.Errorf("--reindex should write 1 doc, got metaOnly=%d", res.metaOnly)
 	}
 }
 
@@ -252,13 +235,10 @@ func TestIndexSource_ThreadMode_SkipsUnchangedThread(t *testing.T) {
 
 	// Second index: same 5 messages — should be skipped.
 	second := []models.FullItem{makeThreadModeItem("thr-mode-1", 5)}
-	_, _, skipped, _, err := sink.indexSource(ctx, "gmail_work", second)
-	if err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
+	res := mustIndexSource(t, sink, ctx, "gmail_work", second)
 
-	if skipped != 1 {
-		t.Errorf("expected thread-mode unchanged thread to be skipped, got skipped=%d", skipped)
+	if res.skipped != 1 {
+		t.Errorf("expected thread-mode unchanged thread to be skipped, got skipped=%d", res.skipped)
 	}
 }
 
@@ -278,17 +258,14 @@ func TestIndexSource_ThreadMode_ReindexesGrownThread(t *testing.T) {
 
 	// Thread grows to 8 messages.
 	second := []models.FullItem{makeThreadModeItem("thr-growing", 8)}
-	_, metaOnly, skipped, _, err := sink.indexSource(ctx, "gmail_work", second)
-	if err != nil {
-		t.Fatalf("second pass: %v", err)
+	res := mustIndexSource(t, sink, ctx, "gmail_work", second)
+
+	if res.skipped != 0 {
+		t.Errorf("thread-mode grown thread should not be skipped, got skipped=%d", res.skipped)
 	}
 
-	if skipped != 0 {
-		t.Errorf("thread-mode grown thread should not be skipped, got skipped=%d", skipped)
-	}
-
-	if metaOnly != 1 {
-		t.Errorf("thread-mode grown thread should produce 1 write, got metaOnly=%d", metaOnly)
+	if res.metaOnly != 1 {
+		t.Errorf("thread-mode grown thread should produce 1 write, got metaOnly=%d", res.metaOnly)
 	}
 
 	// Verify the DB now stores 8.
@@ -369,17 +346,14 @@ func TestIndexSource_MultipleThreadsSomeGrown(t *testing.T) {
 
 	// Second pass: stable thread unchanged (2 msgs), growing thread now has 5.
 	second := append(makeGmailItems("thread-stable", 2), makeGmailItems("thread-growing", 5)...)
-	_, metaOnly, skipped, _, err := sink.indexSource(ctx, "gmail_work", second)
-	if err != nil {
-		t.Fatalf("second pass: %v", err)
+	res := mustIndexSource(t, sink, ctx, "gmail_work", second)
+
+	if res.skipped != 1 {
+		t.Errorf("expected 1 skipped (stable thread), got %d", res.skipped)
 	}
 
-	if skipped != 1 {
-		t.Errorf("expected 1 skipped (stable thread), got %d", skipped)
-	}
-
-	if metaOnly != 1 {
-		t.Errorf("expected 1 written (growing thread), got %d", metaOnly)
+	if res.metaOnly != 1 {
+		t.Errorf("expected 1 written (growing thread), got %d", res.metaOnly)
 	}
 
 	// Confirm the growing thread's count was updated.

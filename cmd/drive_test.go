@@ -156,6 +156,7 @@ func TestExtractFrontmatterTimestamp_QuotedValue(t *testing.T) {
 func TestExtractFrontmatterTimestamp_FieldAbsent(t *testing.T) {
 	content := "---\ntitle: No timestamp here\n---\n\n# Body"
 	got := extractFrontmatterTimestamp(content, "created")
+
 	if !got.IsZero() {
 		t.Errorf("expected zero time, got %v", got)
 	}
@@ -164,6 +165,7 @@ func TestExtractFrontmatterTimestamp_FieldAbsent(t *testing.T) {
 func TestExtractFrontmatterTimestamp_NoFrontmatter(t *testing.T) {
 	content := "# Just a heading\n\nSome body text."
 	got := extractFrontmatterTimestamp(content, "created")
+
 	if !got.IsZero() {
 		t.Errorf("expected zero time for file with no frontmatter, got %v", got)
 	}
@@ -173,6 +175,7 @@ func TestExtractFrontmatterTimestamp_HorizontalRuleInBody(t *testing.T) {
 	// "---" in the body should NOT be treated as a second frontmatter block.
 	content := "---\ntitle: Doc\n---\n\n# Heading\n\nSome text\n\n---\n\ncreated: 2099-01-01T00:00:00Z\n"
 	got := extractFrontmatterTimestamp(content, "created")
+
 	if !got.IsZero() {
 		t.Errorf("horizontal rule in body should not produce a timestamp, got %v", got)
 	}
@@ -188,6 +191,7 @@ func TestExtractFrontmatterTimestamp_EmptyContent(t *testing.T) {
 func TestExtractFrontmatterTimestamp_UnparsableValue(t *testing.T) {
 	content := "---\ncreated: not-a-timestamp\n---\n"
 	got := extractFrontmatterTimestamp(content, "created")
+
 	if !got.IsZero() {
 		t.Errorf("expected zero time for unparsable value, got %v", got)
 	}
@@ -252,6 +256,7 @@ func TestWriteDocToFile_WritesWhenContentChanges(t *testing.T) {
 	}
 
 	info1, _ := os.Stat(filePath)
+
 	time.Sleep(50 * time.Millisecond)
 
 	err = writeDocToFile("https://docs.google.com/document/d/abc123/edit", meta, "# Updated", filePath)
@@ -321,6 +326,7 @@ func TestWriteDocToFile_UsesModifiedTimeForUpdatedAt(t *testing.T) {
 
 	// Second call with same ModifiedTime and same content should skip writing.
 	info1, _ := os.Stat(filePath)
+
 	time.Sleep(50 * time.Millisecond)
 
 	if err := writeDocToFile("https://docs.google.com/document/d/abc123/edit", meta, "# Body", filePath); err != nil {
