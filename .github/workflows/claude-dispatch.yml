@@ -35,8 +35,10 @@ jobs:
           # Optional: Specify an API key, otherwise we'll use your Claude account automatically
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
-          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4)
-          # model: "claude-opus-4-20250514"
+          # Pinned explicitly: the action's undocumented default (claude-sonnet-4-20250514)
+          # was retired and now 404s. Uncomment for Claude Opus 5 instead.
+          model: "claude-sonnet-5"
+          # model: "claude-opus-5"
 
           # Optional: Allow Claude to run specific commands
           # allowed_tools: |
