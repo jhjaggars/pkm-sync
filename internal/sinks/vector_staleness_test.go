@@ -10,6 +10,24 @@ import (
 	"pkm-sync/pkg/models"
 )
 
+// mustIndexSource calls indexSource and fatals on error, discarding count return values.
+// The count returns are intentionally ignored; this helper exists solely to avoid
+// dogsled violations at call sites where only the error matters.
+func mustIndexSource(t *testing.T, sink *VectorSink, ctx context.Context, sourceName string, items []models.FullItem) {
+	t.Helper()
+
+	indexed, metaOnly, skipped, failed, err := sink.indexSource(ctx, sourceName, items)
+	if err != nil {
+		t.Fatalf("indexSource(%q): %v", sourceName, err)
+	}
+
+	// Explicitly discard counts to satisfy the compiler; counts are not under test here.
+	_ = indexed
+	_ = metaOnly
+	_ = skipped
+	_ = failed
+}
+
 // newTestVectorSink creates a VectorSink backed by a temp on-disk DB (no embeddings).
 func newTestVectorSink(t *testing.T) (*VectorSink, func()) {
 	t.Helper()
@@ -107,10 +125,7 @@ func TestIndexSource_ReindexesGrownThreads(t *testing.T) {
 
 	// First index with 2 messages.
 	items2 := makeGmailItems("thread-xyz", 2)
-	_, _, _, _, err := sink.indexSource(ctx, "gmail_work", items2)
-	if err != nil {
-		t.Fatalf("first indexSource failed: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", items2)
 
 	// Verify stored count is 2.
 	counts, err := sink.store.GetIndexedThreadCounts("gmail_work")
@@ -157,9 +172,7 @@ func TestIndexSource_SkipsSameSizeThread(t *testing.T) {
 	ctx := context.Background()
 	items := makeGmailItems("thread-same", 4)
 
-	if _, _, _, _, err := sink.indexSource(ctx, "gmail_work", items); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", items)
 
 	_, _, skipped, _, err := sink.indexSource(ctx, "gmail_work", items)
 	if err != nil {
@@ -180,9 +193,7 @@ func TestIndexSource_ReindexFlagBypassesStalenessCheck(t *testing.T) {
 	ctx := context.Background()
 	items := makeGmailItems("thread-force", 3)
 
-	if _, _, _, _, err := sink.indexSource(ctx, "gmail_work", items); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", items)
 
 	// Enable reindex flag.
 	sink.cfg.Reindex = true
@@ -227,9 +238,7 @@ func TestIndexSource_ThreadMode_SkipsUnchangedThread(t *testing.T) {
 
 	// First index: thread with 5 real messages, represented as 1 FullItem.
 	first := []models.FullItem{makeThreadModeItem("thr-mode-1", 5)}
-	if _, _, _, _, err := sink.indexSource(ctx, "gmail_work", first); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", first)
 
 	// Verify the DB stored 5, not 1.
 	counts, err := sink.store.GetIndexedThreadCounts("gmail_work")
@@ -265,9 +274,7 @@ func TestIndexSource_ThreadMode_ReindexesGrownThread(t *testing.T) {
 
 	// First index: thread has 3 messages.
 	first := []models.FullItem{makeThreadModeItem("thr-growing", 3)}
-	if _, _, _, _, err := sink.indexSource(ctx, "gmail_work", first); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", first)
 
 	// Thread grows to 8 messages.
 	second := []models.FullItem{makeThreadModeItem("thr-growing", 8)}
@@ -307,6 +314,7 @@ func TestEffectiveMessageCount(t *testing.T) {
 			name: "message mode: multiple items, no metadata count",
 			items: func() []models.FullItem {
 				items := makeGmailItems("t1", 4)
+
 				return items
 			}(),
 			expected: 4,
@@ -322,8 +330,8 @@ func TestEffectiveMessageCount(t *testing.T) {
 			expected: 1,
 		},
 		{
-			name: "single message item without message_count metadata",
-			items: []models.FullItem{makeGmailItems("t4", 1)[0]},
+			name:     "single message item without message_count metadata",
+			items:    []models.FullItem{makeGmailItems("t4", 1)[0]},
 			expected: 1,
 		},
 	}
@@ -357,9 +365,7 @@ func TestIndexSource_MultipleThreadsSomeGrown(t *testing.T) {
 
 	// Index two threads at 2 messages each.
 	first := append(makeGmailItems("thread-stable", 2), makeGmailItems("thread-growing", 2)...)
-	if _, _, _, _, err := sink.indexSource(ctx, "gmail_work", first); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
+	mustIndexSource(t, sink, ctx, "gmail_work", first)
 
 	// Second pass: stable thread unchanged (2 msgs), growing thread now has 5.
 	second := append(makeGmailItems("thread-stable", 2), makeGmailItems("thread-growing", 5)...)

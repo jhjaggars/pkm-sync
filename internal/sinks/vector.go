@@ -162,15 +162,15 @@ func (s *VectorSink) indexSource(
 		currentMessageCount := effectiveMessageCount(group)
 
 		if alreadyIndexed {
-			if currentMessageCount <= storedCount {
-				// Thread hasn't grown — skip.
+			if currentMessageCount == storedCount {
+				// Thread is unchanged — skip.
 				skipped++
 
 				continue
 			}
 
-			// Thread has new messages — re-index.
-			slog.Info("Thread has grown, re-indexing",
+			// Thread message count changed — re-index.
+			slog.Info("Thread message count changed, re-indexing",
 				"thread_id", threadID,
 				"stored_count", storedCount,
 				"current_count", currentMessageCount,
@@ -435,6 +435,25 @@ func extractThreadID(item models.FullItem) string {
 	return ""
 }
 
+// messageCountFromMetadata returns the message_count value from item metadata
+// as an int, or 0 if the key is absent or not an int/float64 type.
+// Callers are responsible for validating the returned value is meaningful.
+func messageCountFromMetadata(item models.FullItem) int {
+	mc, ok := item.GetMetadata()["message_count"]
+	if !ok {
+		return 0
+	}
+
+	switch v := mc.(type) {
+	case int:
+		return v
+	case float64: // JSON round-trip produces float64
+		return int(v)
+	}
+
+	return 0
+}
+
 // effectiveMessageCount returns the true number of email messages represented
 // by a group. In thread mode (include_threads: true), FromGmailThread aggregates
 // all messages into a single FullItem and stores the real count in
@@ -443,17 +462,8 @@ func extractThreadID(item models.FullItem) string {
 // In message mode len(group.messages) is correct and metadata is absent.
 func effectiveMessageCount(group *itemGroup) int {
 	if len(group.messages) == 1 {
-		if mc, ok := group.messages[0].GetMetadata()["message_count"]; ok {
-			switch v := mc.(type) {
-			case int:
-				if v > 1 {
-					return v
-				}
-			case float64: // JSON round-trip produces float64
-				if int(v) > 1 {
-					return int(v)
-				}
-			}
+		if n := messageCountFromMetadata(group.messages[0]); n > 1 {
+			return n
 		}
 	}
 

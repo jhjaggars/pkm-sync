@@ -137,6 +137,7 @@ func TestExtractFrontmatterTimestamp_BasicRFC3339(t *testing.T) {
 	content := "---\ncreated: 2026-04-16T09:29:38-04:00\ntitle: Test\n---\n\n# Body"
 	got := extractFrontmatterTimestamp(content, "created")
 	want, _ := time.Parse(time.RFC3339, "2026-04-16T09:29:38-04:00")
+
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -146,6 +147,7 @@ func TestExtractFrontmatterTimestamp_QuotedValue(t *testing.T) {
 	content := "---\ncreated: \"2026-04-16T09:29:38-04:00\"\n---\n"
 	got := extractFrontmatterTimestamp(content, "created")
 	want, _ := time.Parse(time.RFC3339, "2026-04-16T09:29:38-04:00")
+
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}

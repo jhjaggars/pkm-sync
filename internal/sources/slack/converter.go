@@ -37,8 +37,10 @@ func processRichTextElement(sub map[string]any, userResolver UserResolver) strin
 		url, hasURL := sub["url"].(string)
 		linkText, hasText := sub["text"].(string)
 
-		if hasText && linkText != "" {
+		if hasText && linkText != "" && hasURL && url != "" {
 			return fmt.Sprintf("%s (%s)", linkText, url)
+		} else if hasText && linkText != "" {
+			return linkText
 		} else if hasURL && url != "" {
 			return url
 		}

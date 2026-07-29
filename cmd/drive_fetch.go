@@ -171,6 +171,7 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 	// Preserve the original created timestamp so rendered content stays stable
 	// across refreshes. Fall back to now only for new files.
 	createdAt := time.Now()
+
 	if len(existingBytes) > 0 {
 		if t := extractFrontmatterTimestamp(string(existingBytes), "created"); !t.IsZero() {
 			createdAt = t
@@ -228,7 +229,7 @@ func writeDocToFile(sourceURL string, metadata *models.DriveFile, markdown, file
 // is scanned; "---" horizontal rules in the document body are ignored.
 func extractFrontmatterTimestamp(content, field string) time.Time {
 	prefix := field + ": "
-	seenOpen := false  // true after the opening "---"
+	seenOpen := false // true after the opening "---"
 	inFrontmatter := false
 
 	for _, line := range strings.Split(content, "\n") {
