@@ -387,6 +387,12 @@ type sourceSyncConfig struct {
 	SyncState *state.SyncState
 }
 
+// writesToVault reports whether a source type exports files to the target vault.
+// Slack and Gmail use archive sinks only — no file export to vault.
+func writesToVault(sourceType string) bool {
+	return sourceType != "slack" && sourceType != "gmail"
+}
+
 // runSourceSync executes the full sync pipeline for a specific source type.
 // It is the shared implementation used by the gmail, drive, slack, and sync commands.
 func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
@@ -395,8 +401,13 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		return fmt.Errorf("invalid since parameter: %w", err)
 	}
 
-	fmt.Printf("Syncing %s from sources [%s] to %s (output: %s, since: %s)\n",
-		ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.TargetName, ssc.OutputDir, ssc.Since)
+	if writesToVault(ssc.SourceType) {
+		fmt.Printf("Syncing %s from sources [%s] to %s (output: %s, since: %s)\n",
+			ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.TargetName, ssc.OutputDir, ssc.Since)
+	} else {
+		fmt.Printf("Syncing %s from sources [%s] to local archive databases (since: %s)\n",
+			ssc.SourceKind, strings.Join(ssc.Sources, ", "), ssc.Since)
+	}
 
 	// Resolve the vector DB path for incremental since-time inference and for
 	// sub-item state tracking.
@@ -538,9 +549,8 @@ func runSourceSync(cfg *models.Config, ssc sourceSyncConfig) error {
 		}
 	}
 
-	// Slack and Gmail use archive sinks only — no file export to vault.
 	var fileSink *sinks.FileSink
-	if ssc.SourceType != "slack" && ssc.SourceType != "gmail" {
+	if writesToVault(ssc.SourceType) {
 		fileSink, err = createFileSinkWithConfig(ssc.TargetName, effectiveOutputDir, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create sink: %w", err)
