@@ -66,10 +66,14 @@ func NewService(client *http.Client, config models.GmailSourceConfig, sourceID s
 	return s, nil
 }
 
+// maxListPageSize is the Gmail API's maximum MaxResults for Messages.List.
+const maxListPageSize = 500
+
 // GetMessages retrieves messages based on the configured filters and time range.
 func (s *Service) GetMessages(since time.Time, limit int) ([]*gmail.Message, error) {
-	// For large mailboxes, use batch processing.
-	if limit > 1000 {
+	// Messages.List returns at most 500 results per page, so anything larger
+	// must paginate or it silently truncates to the first page.
+	if limit > maxListPageSize {
 		return s.getMessagesWithBatchProcessing(since, limit)
 	}
 
